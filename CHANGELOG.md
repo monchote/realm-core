@@ -15,6 +15,7 @@
 
 ### Internals
 * A separate sync version is removed.
+* `SimulatedFailure` mmap handling was not thread-safe.
 
 ----------------------------------------------
 
