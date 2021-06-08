@@ -253,8 +253,13 @@ public:
 
             m_cb(std::move(changes), {});
         }
-        m_prev_rt->advance_read(
-            static_cast<Transaction*>(m_dict.get_table()->get_parent_group())->get_version_of_current_transaction());
+        if (m_dict.is_attached()) {
+            auto current_tr = static_cast<Transaction*>(m_dict.get_table()->get_parent_group());
+            m_prev_rt->advance_read(current_tr->get_version_of_current_transaction());
+        }
+        else {
+            m_prev_rt = nullptr;
+        }
     }
 
     void error(std::exception_ptr ptr)
