@@ -84,7 +84,7 @@ uint_least64_t cityhash_64(const unsigned char* data, size_t len) noexcept;
 class StringData {
 public:
     /// Construct a null reference.
-    StringData() noexcept;
+    StringData() noexcept = default;
 
     StringData(int) = delete;
 
@@ -105,6 +105,12 @@ public:
     /// Initialize from a zero terminated C style string. Pass null to construct
     /// a null reference.
     StringData(const char* c_str) noexcept;
+
+    ~StringData()
+    {
+        if (m_owns_data)
+            delete[] m_data;
+    }
 
     char operator[](size_t i) const noexcept;
 
@@ -168,8 +174,9 @@ public:
     size_t hash() const noexcept;
 
 private:
-    const char* m_data;
-    size_t m_size;
+    const char* m_data = nullptr;
+    uint32_t m_size = 0;
+    bool m_owns_data = false;
 
     static bool matchlike(const StringData& text, const StringData& pattern) noexcept;
     static bool matchlike_ins(const StringData& text, const StringData& pattern_upper,
@@ -181,12 +188,6 @@ private:
 
 
 // Implementation:
-
-inline StringData::StringData() noexcept
-    : m_data(nullptr)
-    , m_size(0)
-{
-}
 
 inline StringData::StringData(const char* external_data, size_t data_size) noexcept
     : m_data(external_data)

@@ -1305,3 +1305,44 @@ TEST_CASE("dictionary aggregate", "[dictionary]") {
     auto sum = res.sum("intCol");
     REQUIRE(*sum == 16);
 }
+
+TEST_CASE("dictionary error", "[dictionary]") {
+    InMemoryTestFile config;
+    config.schema = Schema{
+        {"DictionaryObject",
+         {
+             {"intDictionary", PropertyType::Dictionary | PropertyType::String},
+         }},
+    };
+
+    auto r = Realm::get_shared_realm(config);
+    CppContext ctx(r);
+    auto prop = r->schema().find("DictionaryObject")->property_for_name("intDictionary");
+
+    r->begin_transaction();
+    auto obj = Object::create(ctx, r, *r->schema().find("DictionaryObject"), Any{AnyDict{}});
+    object_store::Dictionary dict(obj, prop);
+
+    dict.insert("1", "one");
+    dict.insert("2", "two");
+    dict.insert("3", "three");
+    r->commit_transaction();
+    auto res = dict.get_values();
+    REQUIRE(res.size() == 3);
+
+    DictionaryChangeSet key_change;
+    {
+        auto token =
+            dict.add_key_based_notification_callback([&key_change](DictionaryChangeSet c, std::exception_ptr) {
+                key_change = c;
+            });
+        advance_and_notify(*r);
+        r->begin_transaction();
+        obj.obj().remove();
+        r->commit_transaction();
+        advance_and_notify(*r);
+        r->close();
+    }
+
+    Realm::delete_files(config.path);
+}

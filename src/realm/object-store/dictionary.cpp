@@ -20,6 +20,8 @@
 #include <realm/object-store/results.hpp>
 #include <realm/table.hpp>
 
+#include <iostream>
+
 namespace realm {
 namespace {
 class DictionaryKeyAdapter : public CollectionBase {
@@ -230,6 +232,14 @@ public:
         , m_prev_dict(static_cast<realm::Dictionary*>(m_prev_rt->import_copy_of(dict).release()))
         , m_cb(cb)
     {
+        std::cout << "Constr" << std::endl;
+    }
+    NotificationHandler(const NotificationHandler&) = default;
+    NotificationHandler(NotificationHandler&&) = default;
+    ~NotificationHandler()
+    {
+        if (m_prev_rt)
+            std::cout << "Destr" << std::endl;
     }
 
     void before(CollectionChangeSet const&) {}
@@ -240,7 +250,7 @@ public:
             m_cb(DictionaryChangeSet(), {});
         }
         else {
-            DictionaryChangeSet changes(m_prev_rt->duplicate());
+            DictionaryChangeSet changes;
             for (auto ndx : c.deletions.as_indexes()) {
                 changes.deletions.push_back(m_prev_dict->get_key(ndx));
             }
