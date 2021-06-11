@@ -616,9 +616,11 @@ void client_reset::recover_schema(const Transaction& group_src, Transaction& gro
     }
 }
 
-client_reset::LocalVersionIDs client_reset::perform_client_reset_diff(
-    const std::string& path_local, const util::Optional<std::array<char, 64>>& encryption_key,
-    sync::SaltedFileIdent client_file_ident, sync::SaltedVersion server_version, util::Logger& logger)
+client_reset::LocalVersionIDs
+client_reset::perform_client_reset_diff(const std::string& path_local,
+                                        const util::Optional<std::array<char, 64>>& encryption_key,
+                                        sync::SaltedFileIdent client_file_ident, bool seamless_loss,
+                                        sync::SaltedVersion server_version, util::Logger& logger)
 {
     logger.info("Client reset, path_local = %1, "
                 "encryption = %2, client_file_ident.ident = %3, "
@@ -644,7 +646,10 @@ client_reset::LocalVersionIDs client_reset::perform_client_reset_diff(
     //    history_remote->set_client_file_ident_in_wt(current_version_remote, client_file_ident);
 
     // make breaking changes in the local copy which cannot be advanced
-    remove_all_tables(*group_local, logger);
+    // changes made here are reflected in the notifier logs
+    if (!seamless_loss) {
+        remove_all_tables(*group_local, logger);
+    }
 
     // Extract the changeset produced in the remote Realm during recovery.
     //    sync::ChangesetEncoder& instruction_encoder = history_remote->get_instruction_encoder();

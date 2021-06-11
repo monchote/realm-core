@@ -447,6 +447,7 @@ void SyncSession::handle_error(SyncError error)
         switch (m_config.client_resync_mode) {
             case ClientResyncMode::Manual:
                 break;
+            case ClientResyncMode::SeamlessLoss:
             case ClientResyncMode::DiscardLocal: {
                 // Performing a client resync requires tearing down our current
                 // sync session and creating a new one with a forced client
@@ -462,11 +463,11 @@ void SyncSession::handle_error(SyncError error)
                     m_force_client_reset = true;
                     CompletionCallbacks callbacks;
                     std::swap(m_completion_callbacks, callbacks);
+                    // always swap back, even if advance_state throws
+                    auto guard = util::make_scope_exit([&]() noexcept {
+                        std::swap(callbacks, m_completion_callbacks);
+                    });
                     advance_state(lock, State::inactive);
-
-                    // FIXME This should be done in a scope guard so that we always do this, even if advance_state
-                    // throws.
-                    std::swap(callbacks, m_completion_callbacks);
                 }
                 revive_if_needed();
                 return;
@@ -697,10 +698,8 @@ void SyncSession::do_create_sync_session()
     session_config.custom_http_headers = m_config.custom_http_headers;
 
     if (m_force_client_reset) {
-        std::string metadata_dir = m_realm_path + ".resync";
-        util::try_make_dir(metadata_dir);
         sync::Session::Config::ClientReset config;
-        config.metadata_dir = metadata_dir;
+        config.seamless_loss = (m_config.client_resync_mode == ClientResyncMode::SeamlessLoss);
         session_config.client_reset_config = config;
     }
 
