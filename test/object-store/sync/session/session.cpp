@@ -749,11 +749,12 @@ TEST_CASE("sync: client reset") {
     auto get_table = [](Realm& realm, StringData object_type) {
         return ObjectStore::table_for_object_type(realm.read_group(), object_type);
     };
-    auto create_object = [&](Realm& realm, StringData object_type) -> Obj {
+    auto create_object = [&](Realm& realm, StringData object_type,
+                             util::Optional<int64_t> primary_key = util::none) -> Obj {
         auto table = get_table(realm, object_type);
         REQUIRE(table);
         static int64_t pk = 0;
-        return table->create_object_with_primary_key(pk++);
+        return table->create_object_with_primary_key(primary_key ? *primary_key : pk++);
     };
 
     auto setup = [&](auto fn) {
@@ -816,159 +817,268 @@ TEST_CASE("sync: client reset") {
         session->revive_if_needed();
         return realm;
     };
-    /*
-        SECTION("should trigger error callback when mode is manual") {
-            config.sync_config->client_resync_mode = ClientResyncMode::Manual;
-            std::atomic<bool> called{false};
-            config.sync_config->error_handler = [&](std::shared_ptr<SyncSession>, SyncError error) {
-                REQUIRE(error.is_client_reset_requested());
-                called = true;
-            };
 
-            auto realm = trigger_client_reset([](auto&) {}, [](auto&) {});
-
-            EventLoop::main().run_until([&] {
-                return called.load();
-            });
-        }
-
-        config.sync_config->client_resync_mode = ClientResyncMode::DiscardLocal;
-        config.sync_config->error_handler = [&](std::shared_ptr<SyncSession>, SyncError) {
-            FAIL("Error handler should not have been called");
+    SECTION("should trigger error callback when mode is manual") {
+        config.sync_config->client_resync_mode = ClientResyncMode::Manual;
+        std::atomic<bool> called{false};
+        config.sync_config->error_handler = [&](std::shared_ptr<SyncSession>, SyncError error) {
+            REQUIRE(error.is_client_reset_requested());
+            called = true;
         };
-    */
-    //    SECTION("should discard local changeset when mode is discard")
-    //    {
-    //        config.sync_config->client_resync_mode = ClientResyncMode::DiscardLocal;
-    //
-    //        auto realm = trigger_client_reset([](auto&) {}, [](auto&) {});
-    //        wait_for_download(*realm);
-    //        REQUIRE_THROWS(realm->refresh());
-    //        CHECK(ObjectStore::table_for_object_type(realm->read_group(), "object")->begin()->get<Int>("value") ==
-    //        4); realm->close(); SharedRealm r_after; REQUIRE_NOTHROW(r_after = Realm::get_shared_realm(config));
-    //        CHECK(ObjectStore::table_for_object_type(r_after->read_group(), "object")->begin()->get<Int>("value") ==
-    //        6);
-    //    }
-    /*
-        SECTION("should honor encryption key for downloaded Realm") {
-            config.encryption_key.resize(64, 'a');
-            config.sync_config->realm_encryption_key = std::array<char, 64>();
-            config.sync_config->realm_encryption_key->fill('a');
-            config.sync_config->client_resync_mode = ClientResyncMode::DiscardLocal;
 
-            auto realm = trigger_client_reset([](auto&) {}, [](auto&) {});
-            wait_for_download(*realm);
-            realm->close();
-            SharedRealm r_after;
-            REQUIRE_NOTHROW(r_after = Realm::get_shared_realm(config));
-            CHECK(ObjectStore::table_for_object_type(r_after->read_group(), "object")->begin()->get<Int>("value") ==
-       6);
-        }
+        auto realm = trigger_client_reset([](auto&) {}, [](auto&) {});
 
-        SECTION("add table in discarded transaction") {
-            setup([&](auto& realm) {
-                auto table = ObjectStore::table_for_object_type(realm.read_group(), "object2");
-                REQUIRE(!table);
-            });
+        EventLoop::main().run_until([&] {
+            return called.load();
+        });
+    }
 
-            auto realm = trigger_client_reset(
-                [&create_object](auto& realm) {
-                    realm.update_schema(
-                        {
-                            {"object2",
-                             {
-                                 {"_id", PropertyType::Int, Property::IsPrimary{true}},
-                                 {"value2", PropertyType::Int},
-                             }},
-                        },
-                        0, nullptr, nullptr, true);
-                    create_object(realm, "object2");
-                },
-                [](auto&) {});
-            wait_for_download(*realm);
-            // test local realm that changes were persisted
-            REQUIRE_THROWS(realm->refresh());
-            auto table = ObjectStore::table_for_object_type(realm->read_group(), "object2");
-            REQUIRE(table);
-            REQUIRE(table->size() == 1);
-            // test reset realm that changes were overwritten
-            realm = Realm::get_shared_realm(config);
-            table = ObjectStore::table_for_object_type(realm->read_group(), "object2");
+    config.sync_config->client_resync_mode = ClientResyncMode::DiscardLocal;
+    config.sync_config->error_handler = [&](std::shared_ptr<SyncSession>, SyncError) {
+        FAIL("Error handler should not have been called");
+    };
+
+    SECTION("should discard local changeset when mode is discard") {
+        config.sync_config->client_resync_mode = ClientResyncMode::DiscardLocal;
+
+        auto realm = trigger_client_reset([](auto&) {}, [](auto&) {});
+        wait_for_download(*realm);
+        REQUIRE_THROWS(realm->refresh());
+        CHECK(ObjectStore::table_for_object_type(realm->read_group(), "object")->begin()->get<Int>("value") == 4);
+        realm->close();
+        SharedRealm r_after;
+        REQUIRE_NOTHROW(r_after = Realm::get_shared_realm(config));
+        CHECK(ObjectStore::table_for_object_type(r_after->read_group(), "object")->begin()->get<Int>("value") == 6);
+    }
+
+    SECTION("should honor encryption key for downloaded Realm") {
+        config.encryption_key.resize(64, 'a');
+        config.sync_config->realm_encryption_key = std::array<char, 64>();
+        config.sync_config->realm_encryption_key->fill('a');
+        config.sync_config->client_resync_mode = ClientResyncMode::DiscardLocal;
+
+        auto realm = trigger_client_reset([](auto&) {}, [](auto&) {});
+        wait_for_download(*realm);
+        realm->close();
+        SharedRealm r_after;
+        REQUIRE_NOTHROW(r_after = Realm::get_shared_realm(config));
+        CHECK(ObjectStore::table_for_object_type(r_after->read_group(), "object")->begin()->get<Int>("value") == 6);
+    }
+
+    SECTION("add table in discarded transaction") {
+        setup([&](auto& realm) {
+            auto table = ObjectStore::table_for_object_type(realm.read_group(), "object2");
             REQUIRE(!table);
-        }
+        });
 
-        SECTION("add column in discarded transaction") {
-            auto realm = trigger_client_reset(
-                [](auto& realm) {
-                    realm.update_schema(
-                        {
-                            {"object",
-                             {
-                                 {"_id", PropertyType::Int, Property::IsPrimary{true}},
-                                 {"value2", PropertyType::Int},
-                             }},
-                        },
-                        0, nullptr, nullptr, true);
-                    ObjectStore::table_for_object_type(realm.read_group(), "object")->begin()->set("value2", 123);
-                },
-                [](auto&) {});
-            wait_for_download(*realm);
-            // test local realm that changes were persisted
-            REQUIRE_THROWS(realm->refresh());
-            auto table = ObjectStore::table_for_object_type(realm->read_group(), "object");
-            REQUIRE(table->get_column_count() == 3);
-            REQUIRE(table->begin()->get<Int>("value2") == 123);
-            REQUIRE_THROWS(realm->refresh());
-            // test resync'd realm that changes were overwritten
-            realm = Realm::get_shared_realm(config);
-            table = ObjectStore::table_for_object_type(realm->read_group(), "object");
-            REQUIRE(table);
-            REQUIRE(table->get_column_count() == 2);
-            REQUIRE(!bool(table->get_column_key("value2")));
-        }
-    */
-    SECTION("should discard local changes when mode is seamless loss") {
+        auto realm = trigger_client_reset(
+            [&create_object](auto& realm) {
+                realm.update_schema(
+                    {
+                        {"object2",
+                         {
+                             {"_id", PropertyType::Int, Property::IsPrimary{true}},
+                             {"value2", PropertyType::Int},
+                         }},
+                    },
+                    0, nullptr, nullptr, true);
+                create_object(realm, "object2");
+            },
+            [](auto&) {});
+        wait_for_download(*realm);
+        // test local realm that changes were persisted
+        REQUIRE_THROWS(realm->refresh());
+        auto table = ObjectStore::table_for_object_type(realm->read_group(), "object2");
+        REQUIRE(table);
+        REQUIRE(table->size() == 1);
+        // test reset realm that changes were overwritten
+        realm = Realm::get_shared_realm(config);
+        table = ObjectStore::table_for_object_type(realm->read_group(), "object2");
+        REQUIRE(!table);
+    }
+
+    SECTION("add column in discarded transaction") {
+        auto realm = trigger_client_reset(
+            [](auto& realm) {
+                realm.update_schema(
+                    {
+                        {"object",
+                         {
+                             {"_id", PropertyType::Int, Property::IsPrimary{true}},
+                             {"value2", PropertyType::Int},
+                         }},
+                    },
+                    0, nullptr, nullptr, true);
+                ObjectStore::table_for_object_type(realm.read_group(), "object")->begin()->set("value2", 123);
+            },
+            [](auto&) {});
+        wait_for_download(*realm);
+        // test local realm that changes were persisted
+        REQUIRE_THROWS(realm->refresh());
+        auto table = ObjectStore::table_for_object_type(realm->read_group(), "object");
+        REQUIRE(table->get_column_count() == 3);
+        REQUIRE(table->begin()->get<Int>("value2") == 123);
+        REQUIRE_THROWS(realm->refresh());
+        // test resync'd realm that changes were overwritten
+        realm = Realm::get_shared_realm(config);
+        table = ObjectStore::table_for_object_type(realm->read_group(), "object");
+        REQUIRE(table);
+        REQUIRE(table->get_column_count() == 2);
+        REQUIRE(!bool(table->get_column_key("value2")));
+    }
+
+    SECTION("seamless loss") {
         config.cache = false;
         config.automatic_change_notifications = false;
         config.sync_config->client_resync_mode = ClientResyncMode::SeamlessLoss;
-        auto realm = trigger_client_reset([](auto&) {}, [](auto&) {});
-        Results results(realm, ObjectStore::table_for_object_type(realm->read_group(), "object"));
-        CHECK(results.size() == 1);
-        CHECK(results.get<Obj>(0).get<Int>("value") == 4);
-        auto obj = *ObjectStore::table_for_object_type(realm->read_group(), "object")->begin();
-        CHECK(obj.get<Int>("value") == 4);
-        Object object(realm, obj);
-        CollectionChangeSet object_changes;
-        auto object_token =
-            object.add_notification_callback([&](CollectionChangeSet changes, std::exception_ptr err) {
+
+        Results results;
+        Object object;
+        CollectionChangeSet object_changes, results_changes;
+        NotificationToken object_token, results_token;
+        auto setup_listeners = [&](SharedRealm realm) {
+            results = Results(realm, ObjectStore::table_for_object_type(realm->read_group(), "object"));
+            REQUIRE(results.size() >= 1);
+            REQUIRE(results.get<Obj>(0).get<Int>("value") == 4);
+
+            auto obj = *ObjectStore::table_for_object_type(realm->read_group(), "object")->begin();
+            REQUIRE(obj.get<Int>("value") == 4);
+            object = Object(realm, obj);
+            object_token = object.add_notification_callback([&](CollectionChangeSet changes, std::exception_ptr err) {
                 REQUIRE_FALSE(err);
                 object_changes = std::move(changes);
             });
-        size_t calls = 0;
-        CollectionChangeSet results_changes;
-        auto results_token = results.add_notification_callback([&](CollectionChangeSet c, std::exception_ptr err) {
-            REQUIRE_FALSE(err);
-            ++calls;
-            results_changes = std::move(c);
-        });
+            results_token =
+                results.add_notification_callback([&](CollectionChangeSet changes, std::exception_ptr err) {
+                    REQUIRE_FALSE(err);
+                    results_changes = std::move(changes);
+                });
+        };
 
-        REQUIRE_NOTHROW(advance_and_notify(*realm));
-        CHECK(results.size() == 1);
-        CHECK(results.get<Obj>(0).get<Int>("value") == 4);
-        wait_for_upload(*realm);
-        wait_for_download(*realm);
-        REQUIRE_NOTHROW(advance_and_notify(*realm));
+        SECTION("modify") {
+            auto realm = trigger_client_reset([](auto&) {}, [](auto&) {});
+            setup_listeners(realm);
 
-        CHECK(results.size() == 1);
-        CHECK(results.get<Obj>(0).get<Int>("value") == 6);
-        CHECK(obj.get<Int>("value") == 6);
+            REQUIRE_NOTHROW(advance_and_notify(*realm));
+            CHECK(results.size() == 1);
+            CHECK(results.get<Obj>(0).get<Int>("value") == 4);
 
-        REQUIRE_INDICES(results_changes.modifications, 0);
-        REQUIRE_INDICES(results_changes.insertions);
-        REQUIRE_INDICES(results_changes.deletions);
+            wait_for_upload(*realm);
+            wait_for_download(*realm);
+            REQUIRE_NOTHROW(advance_and_notify(*realm));
 
-        REQUIRE_INDICES(object_changes.modifications, 0);
-        REQUIRE_INDICES(object_changes.insertions);
-        REQUIRE_INDICES(object_changes.deletions);
+            CHECK(results.size() == 1);
+            CHECK(results.get<Obj>(0).get<Int>("value") == 6);
+            CHECK(object.obj().get<Int>("value") == 6);
+            REQUIRE_INDICES(results_changes.modifications); // FIXME: should this actually be a modification?
+            REQUIRE_INDICES(results_changes.insertions, 0);
+            REQUIRE_INDICES(results_changes.deletions, 0);
+            REQUIRE_INDICES(object_changes.modifications);
+            REQUIRE_INDICES(object_changes.insertions, 0);
+            REQUIRE_INDICES(object_changes.deletions, 0);
+        }
+
+        SECTION("delete and insert new") {
+            constexpr int64_t new_value = 42;
+            auto realm = trigger_client_reset([](auto&) {},
+                                              [&](auto& remote) {
+                                                  auto table = get_table(remote, "object");
+                                                  REQUIRE(table);
+                                                  REQUIRE(table->size() == 1);
+                                                  table->clear();
+                                                  auto obj = create_object(remote, "object");
+                                                  auto col = obj.get_table()->get_column_key("value");
+                                                  obj.set(col, new_value);
+                                              });
+            setup_listeners(realm);
+
+            REQUIRE_NOTHROW(advance_and_notify(*realm));
+            CHECK(results.size() == 1);
+            CHECK(results.get<Obj>(0).get<Int>("value") == 4);
+
+            wait_for_upload(*realm);
+            wait_for_download(*realm);
+            REQUIRE_NOTHROW(advance_and_notify(*realm));
+
+            CHECK(results.size() == 1);
+            CHECK(results.get<Obj>(0).get<Int>("value") == new_value);
+            CHECK(!object.is_valid());
+            REQUIRE_INDICES(results_changes.modifications);
+            REQUIRE_INDICES(results_changes.insertions, 0);
+            REQUIRE_INDICES(results_changes.deletions, 0);
+            REQUIRE_INDICES(object_changes.modifications);
+            REQUIRE_INDICES(object_changes.insertions);
+            REQUIRE_INDICES(object_changes.deletions, 0);
+        }
+
+        SECTION("delete and insert same pk is reported as insert/delete") {
+            constexpr int64_t new_value = 42;
+            auto realm = trigger_client_reset([](auto&) {},
+                                              [&](auto& remote) {
+                                                  auto table = get_table(remote, "object");
+                                                  REQUIRE(table);
+                                                  REQUIRE(table->size() == 1);
+                                                  Mixed orig_pk = table->begin()->get_primary_key();
+                                                  table->clear();
+                                                  auto obj = create_object(remote, "object", {orig_pk.get_int()});
+                                                  REQUIRE(obj.get_primary_key() == orig_pk);
+                                                  auto col = obj.get_table()->get_column_key("value");
+                                                  obj.set(col, new_value);
+                                              });
+            setup_listeners(realm);
+
+            REQUIRE_NOTHROW(advance_and_notify(*realm));
+            CHECK(results.size() == 1);
+            CHECK(results.get<Obj>(0).get<Int>("value") == 4);
+
+            wait_for_upload(*realm);
+            wait_for_download(*realm);
+            REQUIRE_NOTHROW(advance_and_notify(*realm));
+
+            CHECK(results.size() == 1);
+            CHECK(results.get<Obj>(0).get<Int>("value") == new_value);
+            CHECK(object.is_valid());
+            CHECK(object.obj().get<Int>("value") == new_value);
+            REQUIRE_INDICES(results_changes.modifications);
+            REQUIRE_INDICES(results_changes.insertions, 0);
+            REQUIRE_INDICES(results_changes.deletions, 0);
+            REQUIRE_INDICES(object_changes.modifications);
+            REQUIRE_INDICES(object_changes.insertions, 0);
+            REQUIRE_INDICES(object_changes.deletions, 0);
+        }
+
+        SECTION("insert in discarded transaction is deleted") {
+            constexpr int64_t new_value = 42;
+            auto realm = trigger_client_reset(
+                [&](auto& local) {
+                    auto table = get_table(local, "object");
+                    REQUIRE(table);
+                    REQUIRE(table->size() == 1);
+                    auto obj = create_object(local, "object");
+                    auto col = obj.get_table()->get_column_key("value");
+                    REQUIRE(table->size() == 2);
+                    obj.set(col, new_value);
+                },
+                [&](auto&) {});
+            setup_listeners(realm);
+
+            REQUIRE_NOTHROW(advance_and_notify(*realm));
+            CHECK(results.size() == 2);
+
+            wait_for_upload(*realm);
+            wait_for_download(*realm);
+            REQUIRE_NOTHROW(advance_and_notify(*realm));
+
+            CHECK(results.size() == 1);
+            CHECK(results.get<Obj>(0).get<Int>("value") == 6);
+            CHECK(object.is_valid());
+            CHECK(object.obj().get<Int>("value") == 6);
+            REQUIRE_INDICES(results_changes.modifications);
+            REQUIRE_INDICES(results_changes.insertions, 0);
+            REQUIRE_INDICES(results_changes.deletions, 0, 1);
+            REQUIRE_INDICES(object_changes.modifications);
+            REQUIRE_INDICES(object_changes.insertions, 0);
+            REQUIRE_INDICES(object_changes.deletions, 0);
+        }
     }
 }

@@ -193,6 +193,18 @@ void client_reset::remove_all_tables(Transaction& tr_dst, util::Logger& logger)
     }
 }
 
+void client_reset::clear_all_tables(Transaction& tr_dst, util::Logger& logger)
+{
+    logger.debug("remove_all_tables, dst size = %1", tr_dst.size());
+    // Remove the tables to be removed.
+    for (auto table_key : tr_dst.get_table_keys()) {
+        TableRef table = tr_dst.get_table(table_key);
+        if (table->get_name().begins_with("class_")) {
+            table->clear();
+        }
+    }
+}
+
 void client_reset::transfer_group(const Transaction& group_src, Transaction& group_dst, util::Logger& logger)
 {
     logger.debug("copy_group, src size = %1, dst size = %2", group_src.size(), group_dst.size());
@@ -647,7 +659,10 @@ client_reset::perform_client_reset_diff(const std::string& path_local,
 
     // make breaking changes in the local copy which cannot be advanced
     // changes made here are reflected in the notifier logs
-    if (!seamless_loss) {
+    if (seamless_loss) {
+        clear_all_tables(*group_local, logger);
+    }
+    else {
         remove_all_tables(*group_local, logger);
     }
 
