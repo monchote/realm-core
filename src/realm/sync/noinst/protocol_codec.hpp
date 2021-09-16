@@ -17,6 +17,7 @@
 #include <realm/sync/impl/clamped_hex_dump.hpp>
 #include <realm/sync/noinst/compression.hpp>
 #include <realm/sync/noinst/integer_codec.hpp>
+#include <realm/sync/noinst/header_line_parser.hpp>
 #include <realm/sync/protocol.hpp>
 #include <realm/sync/transform.hpp>
 #include <realm/sync/changeset_parser.hpp>
@@ -112,153 +113,124 @@ public:
     // The result of the parsing is handled by an object of type Connection.
     // Typically, Connection would be the Connection class from client.cpp
     template <typename Connection>
-    void parse_pong_received(Connection& connection, const char* data, std::size_t size)
+    void parse_pong_received(Connection& connection, util::StringView msg_data)
     {
         util::Logger& logger = connection.logger;
 
-        util::MemoryInputStream in;
-        in.set_buffer(data, data + size);
-        in.unsetf(std::ios_base::skipws);
-
         milliseconds_type timestamp;
-
-        char newline = 0;
-        in >> timestamp >> newline;
-        std::size_t expected_size = std::size_t(in.tellg());
-        bool good_syntax = (in && newline == '\n' && expected_size == size);
-        if (!good_syntax)
-            goto bad_syntax;
+        auto sw_msg_data = parse_header_line(msg_data, '\n', timestamp);
+        if (!sw_msg_data.is_ok() || !sw_msg_data.get_value().empty()) {
+            logger.error("Bad syntax in input message '%1'", msg_data);
+            connection.handle_protocol_error(Error::bad_syntax); // Throws
+            return;
+        }
 
         connection.receive_pong(timestamp);
-        return;
-
-    bad_syntax:
-        logger.error("Bad syntax in input message '%1'", StringData(data, size));
-        connection.handle_protocol_error(Error::bad_syntax); // Throws
-        return;
     }
 
     // parse_message_received takes a (WebSocket) message and parses it.
     // The result of the parsing is handled by an object of type Connection.
     // Typically, Connection would be the Connection class from client.cpp
     template <class Connection>
-    void parse_message_received(Connection& connection, const char* data, std::size_t size)
+    void parse_message_received(Connection& connection, util::StringView msg_data)
     {
         util::Logger& logger = connection.logger;
+        auto report_error = [&](Error err, const auto fmt, auto&&... args) {
+            logger.error(fmt, args...);
+            connection.handle_protocol_error(err);
+        };
 
-        util::MemoryInputStream in;
-        in.set_buffer(data, data + size);
-        in.unsetf(std::ios_base::skipws);
-        std::size_t header_size = 0;
-        std::string message_type;
-        in >> message_type;
+        auto parse_and_check_msg_data = [&](const auto what, char end_delim, auto&&... args) {
+            auto sw_msg_data = parse_header_line_nothrow(msg_data, end_delim, args...);
+            if (!sw_msg_data.is_ok()) {
+                report_error(Error::bad_syntax, "Bad syntax in %1: %2", what, sw_msg_data.get_status());
+                return false;
+            }
+            msg_data = sw_msg_data.get_value();
+            return true;
+        };
+
+        util::StringView message_type;
+        if (!parse_and_check_msg_data("wire protocol message type", ' ', message_type)) {
+            return;
+        }
 
         if (message_type == "download") {
-            session_ident_type session_ident;
-            version_type download_server_version, download_client_version;
-            version_type latest_server_version;
-            salt_type latest_server_version_salt;
-            version_type upload_client_version, upload_server_version;
+            SyncProgress progress;
             std::int_fast64_t downloadable_bytes;
             int is_body_compressed;
             std::size_t uncompressed_body_size, compressed_body_size;
-            char sp_1, sp_2, sp_3, sp_4, sp_5, sp_6, sp_7, sp_8, sp_9, sp_10, sp_11, newline;
-            in >> sp_1 >> session_ident >> sp_2 >> download_server_version >> sp_3 >> download_client_version >>
-                sp_4 >> latest_server_version >> sp_5 >> latest_server_version_salt >> sp_6 >>
-                upload_client_version >> sp_7 >> upload_server_version >> sp_8 >> downloadable_bytes >> sp_9 >>
-                is_body_compressed >> sp_10 >> uncompressed_body_size >> sp_11 >> compressed_body_size >>
-                newline; // Throws
-            header_size = std::size_t(in.tellg());
-            std::size_t body_size = (is_body_compressed ? compressed_body_size : uncompressed_body_size);
-            std::size_t expected_size = header_size + body_size;
-            bool good_syntax = (in && sp_1 == ' ' && sp_2 == ' ' && sp_3 == ' ' && sp_4 == ' ' && sp_5 == ' ' &&
-                                sp_6 == ' ' && sp_7 == ' ' && sp_8 == ' ' && sp_9 == ' ' && sp_10 == ' ' &&
-                                sp_11 == ' ' && newline == '\n' && expected_size == size);
-            if (!good_syntax)
-                goto bad_syntax;
-            if (uncompressed_body_size > s_max_body_size)
-                goto limits_exceeded;
+            session_ident_type session_ident;
 
-            BinaryData body(data + header_size, body_size);
-            BinaryData uncompressed_body;
+            auto msg_with_header = msg_data;
+            if (!parse_and_check_msg_data("DOWNLOAD message", '\n', session_ident, progress.download.server_version,
+                                          progress.download.last_integrated_client_version,
+                                          progress.latest_server_version.version, progress.latest_server_version.salt,
+                                          progress.upload.client_version,
+                                          progress.upload.last_integrated_server_version, downloadable_bytes,
+                                          is_body_compressed, uncompressed_body_size, compressed_body_size)) {
+                return;
+            }
 
+            if (uncompressed_body_size > s_max_body_size) {
+                auto header = msg_with_header.substr(std::distance(msg_with_header.begin(), msg_data.begin()));
+                return report_error(Error::limits_exceeded, "Limits exceeded in input message '%1'", header);
+            }
+
+            auto body_data = msg_data;
             std::unique_ptr<char[]> uncompressed_body_buffer;
             // if is_body_compressed == true, we must decompress the received body.
             if (is_body_compressed) {
                 uncompressed_body_buffer.reset(new char[uncompressed_body_size]);
                 std::error_code ec = _impl::compression::decompress(
-                    body.data(), compressed_body_size, uncompressed_body_buffer.get(), uncompressed_body_size);
+                    msg_data.data(), compressed_body_size, uncompressed_body_buffer.get(), uncompressed_body_size);
 
                 if (ec) {
-                    logger.error("compression::inflate: %1", ec.message());
-                    connection.handle_protocol_error(Error::bad_decompression);
-                    return;
+                    return report_error(Error::bad_decompression, "compression::inflate: %1", ec.message());
                 }
 
-                uncompressed_body = BinaryData(uncompressed_body_buffer.get(), uncompressed_body_size);
+                body_data = util::StringView(uncompressed_body_buffer.get(), uncompressed_body_size);
+                msg_data = msg_data.substr(compressed_body_size);
             }
             else {
-                uncompressed_body = body;
+                msg_data = msg_data.substr(uncompressed_body_size);
             }
 
             logger.trace("Download message compression: is_body_compressed = %1, "
                          "compressed_body_size=%2, uncompressed_body_size=%3",
                          is_body_compressed, compressed_body_size, uncompressed_body_size);
 
-            util::MemoryInputStream in;
-            in.unsetf(std::ios_base::skipws);
-            in.set_buffer(uncompressed_body.data(), uncompressed_body.data() + uncompressed_body_size);
-
             ReceivedChangesets received_changesets;
 
             // Loop through the body and find the changesets.
-            std::size_t position = 0;
-            while (position < uncompressed_body_size) {
-                version_type server_version;
-                version_type client_version;
-                timestamp_type origin_timestamp;
-                file_ident_type origin_file_ident;
-                std::size_t original_changeset_size, changeset_size;
-                char sp_1, sp_2, sp_3, sp_4, sp_5, sp_6;
+            while (!body_data.empty()) {
+                realm::sync::Transformer::RemoteChangeset cur_changeset;
+                std::size_t changeset_size;
+                auto body_data_sw = parse_header_line(body_data, ' ', cur_changeset.remote_version,
+                                                      cur_changeset.last_integrated_local_version,
+                                                      cur_changeset.origin_timestamp, cur_changeset.origin_file_ident,
+                                                      cur_changeset.original_changeset_size, changeset_size);
+                if (!body_data_sw.is_ok()) {
+                    return report_error(Error::bad_changeset_header_syntax, "Bad changeset header syntax: %1",
+                                        body_data_sw.get_status());
+                }
+                body_data = body_data_sw.get_value();
 
-                in >> server_version >> sp_1 >> client_version >> sp_2 >> origin_timestamp >> sp_3 >>
-                    origin_file_ident >> sp_4 >> original_changeset_size >> sp_5 >> changeset_size >> sp_6;
-
-                bool good_syntax =
-                    in && sp_1 == ' ' && sp_2 == ' ' && sp_3 == ' ' && sp_4 == ' ' && sp_5 == ' ' && sp_6 == ' ';
-
-                if (!good_syntax) {
-                    logger.error("Bad changeset header syntax");
-                    connection.handle_protocol_error(Error::bad_changeset_header_syntax);
-                    return;
+                if (changeset_size > body_data.size()) {
+                    return report_error(Error::bad_changeset_size, "Bad changeset size %1 > %2", changeset_size,
+                                        body_data.size());
                 }
 
-                // Update position to the end of the change set
-                position = std::size_t(in.tellg()) + changeset_size;
-
-                if (position > uncompressed_body_size) {
-                    logger.error("Bad changeset size %1 > %2", position, uncompressed_body_size);
-                    connection.handle_protocol_error(Error::bad_changeset_size);
-                    return;
-                }
-
-                if (server_version == 0) {
-                    // The received changeset can never have version 0.
-                    logger.error("Bad server version=0");
-                    connection.handle_protocol_error(Error::bad_server_version);
-                    return;
-                }
-
-                BinaryData changeset_data(uncompressed_body.data() + std::size_t(in.tellg()), changeset_size);
-                in.seekg(position);
+                BinaryData changeset_data(body_data.data(), changeset_size);
+                body_data = body_data.substr(changeset_size);
 
                 if (logger.would_log(util::Logger::Level::trace)) {
                     logger.trace("Received: DOWNLOAD CHANGESET(server_version=%1, "
                                  "client_version=%2, origin_timestamp=%3, origin_file_ident=%4, "
                                  "original_changeset_size=%5, changeset_size=%6)",
-                                 server_version, client_version, origin_timestamp, origin_file_ident,
-                                 original_changeset_size,
-                                 changeset_size); // Throws
+                                 cur_changeset.remote_version, cur_changeset.last_integrated_local_version,
+                                 cur_changeset.origin_timestamp, cur_changeset.origin_file_ident,
+                                 cur_changeset.original_changeset_size, changeset_size); // Throws;
                     if (changeset_data.size() < 1056) {
                         logger.trace("Changeset: %1",
                                      clamped_hex_dump(changeset_data)); // Throws
@@ -277,132 +249,82 @@ public:
 #endif
                 }
 
-                RemoteChangeset changeset_2(server_version, client_version, changeset_data, origin_timestamp,
-                                            origin_file_ident);
-                changeset_2.original_changeset_size = original_changeset_size;
-                received_changesets.push_back(changeset_2); // Throws
+                cur_changeset.data = changeset_data;
+                received_changesets.push_back(cur_changeset); // Throws
             }
 
-            SyncProgress progress;
-            progress.latest_server_version = SaltedVersion{latest_server_version, latest_server_version_salt};
-            progress.download = DownloadCursor{download_server_version, download_client_version};
-            progress.upload = UploadCursor{upload_client_version, upload_server_version};
             connection.receive_download_message(session_ident, progress, downloadable_bytes,
                                                 received_changesets); // Throws
-            return;
         }
-        if (message_type == "pong") {
+        else if (message_type == "pong") {
             milliseconds_type timestamp;
-            char newline = 0;
-            char sp1;
-            in >> sp1 >> timestamp >> newline;
-            header_size = std::size_t(in.tellg());
-            std::size_t expected_size = header_size;
-            bool good_syntax = (in && sp1 == ' ' && newline == '\n' && expected_size == size);
-            if (!good_syntax) {
-                goto bad_syntax;
+            if (!parse_and_check_msg_data("PONG message", '\n', timestamp)) {
+                return;
             }
 
             connection.receive_pong(timestamp);
-            return;
         }
-        if (message_type == "unbound") {
+        else if (message_type == "unbound") {
             session_ident_type session_ident;
-            char sp_1, newline;
-            in >> sp_1 >> session_ident >> newline; // Throws
-            header_size = std::size_t(in.tellg());
-            std::size_t expected_size = header_size;
-            bool good_syntax = (in && sp_1 == ' ' && newline == '\n' && expected_size == size);
-            if (!good_syntax)
-                goto bad_syntax;
+            if (!parse_and_check_msg_data("UNBOUND message", '\n', session_ident)) {
+                return;
+            }
 
             connection.receive_unbound_message(session_ident); // Throws
-            return;
         }
-        if (message_type == "error") {
+        else if (message_type == "error") {
             int error_code;
             std::size_t message_size;
             bool try_again;
             session_ident_type session_ident;
-            char sp_1, sp_2, sp_3, sp_4, newline;
-            in >> sp_1 >> error_code >> sp_2 >> message_size >> sp_3 >> try_again >> sp_4 >> session_ident >>
-                newline; // Throws
-            header_size = std::size_t(in.tellg());
-            std::size_t expected_size = header_size + message_size;
-            bool good_syntax = (in && sp_1 == ' ' && sp_2 == ' ' && sp_3 == ' ' && sp_4 == ' ' && newline == '\n' &&
-                                expected_size == size);
-            if (!good_syntax)
-                goto bad_syntax;
-
-            bool unknown_error = !sync::get_protocol_error_message(error_code);
-            if (unknown_error) {
-                logger.error("Bad error code"); // Throws
-                connection.handle_protocol_error(Error::bad_error_code);
+            if (!parse_and_check_msg_data("ERROR message", '\n', error_code, message_size, try_again,
+                                          session_ident)) {
                 return;
             }
 
-            StringData message{data + header_size, message_size};
+            bool unknown_error = !sync::get_protocol_error_message(error_code);
+            if (unknown_error) {
+                return report_error(Error::bad_error_code, "Bad error code");
+            }
+
+            StringData message{msg_data.data(), message_size};
             connection.receive_error_message(error_code, message, try_again, session_ident); // Throws
-            return;
+            msg_data = msg_data.substr(message_size);
         }
-        if (message_type == "mark") {
+        else if (message_type == "mark") {
             session_ident_type session_ident;
             request_ident_type request_ident;
-            char sp_1, sp_2, newline;
-            in >> sp_1 >> session_ident >> sp_2 >> request_ident >> newline; // Throws
-            header_size = std::size_t(in.tellg());
-            std::size_t expected_size = header_size;
-            bool good_syntax = (in && sp_1 == ' ' && sp_2 == ' ' && newline == '\n' && expected_size == size);
-            if (!good_syntax)
-                goto bad_syntax;
+            if (!parse_and_check_msg_data("MARK message", '\n', session_ident, request_ident)) {
+                return;
+            }
 
             connection.receive_mark_message(session_ident, request_ident); // Throws
-            return;
         }
-        if (message_type == "alloc") {
+        else if (message_type == "alloc") {
             session_ident_type session_ident;
             file_ident_type file_ident;
-            char sp_1, sp_2, newline;
-            in >> sp_1 >> session_ident >> sp_2 >> file_ident >> newline; // Throws
-            header_size = std::size_t(in.tellg());
-            std::size_t expected_size = header_size;
-            bool good_syntax = (in && sp_1 == ' ' && sp_2 == ' ' && newline == '\n' && expected_size == size);
-            if (!good_syntax)
-                goto bad_syntax;
+            if (!parse_and_check_msg_data("ALLOC message", '\n', session_ident, file_ident)) {
+                return;
+            }
 
             connection.receive_alloc_message(session_ident, file_ident); // Throws
             return;
         }
-        if (message_type == "ident") {
+        else if (message_type == "ident") {
             session_ident_type session_ident;
-            file_ident_type client_file_ident;
-            salt_type client_file_ident_salt;
-            char sp_1, sp_2, sp_3, newline;
-            in >> sp_1 >> session_ident >> sp_2 >> client_file_ident >> sp_3 >> client_file_ident_salt >>
-                newline; // Throws
-            header_size = std::size_t(in.tellg());
-            std::size_t expected_size = header_size;
-            bool good_syntax =
-                (in && sp_1 == ' ' && sp_2 == ' ' && sp_3 == ' ' && newline == '\n' && expected_size == size);
-            if (!good_syntax)
-                goto bad_syntax;
-
-            SaltedFileIdent client_file_ident_2{client_file_ident, client_file_ident_salt};
-            connection.receive_ident_message(session_ident, client_file_ident_2); // Throws
-            return;
+            SaltedFileIdent client_file_ident;
+            if (!parse_and_check_msg_data("IDENT message", '\n', session_ident, client_file_ident.ident,
+                                          client_file_ident.salt)) {
+                return;
+            }
+            connection.receive_ident_message(session_ident, client_file_ident); // Throws
         }
-
-        logger.error("Unknown input message type '%1'", StringData(data, size));
-        connection.handle_protocol_error(Error::unknown_message);
-        return;
-    bad_syntax:
-        logger.error("Bad syntax in input message '%1'", StringData(data, size));
-        connection.handle_protocol_error(Error::bad_syntax);
-        return;
-    limits_exceeded:
-        logger.error("Limits exceeded in input message '%1'", StringData(data, header_size));
-        connection.handle_protocol_error(Error::limits_exceeded);
-        return;
+        else {
+            return report_error(Error::unknown_message, "Unknown input message type '%1'", msg_data);
+        }
+        if (!msg_data.empty()) {
+            return report_error(Error::bad_syntax, "wire protocol message had leftover data after being parsed");
+        }
     }
 
 private:
@@ -485,30 +407,19 @@ public:
     // The result of the parsing is handled by an object of type Connection.
     // Typically, Connection would be the Connection class from server.cpp
     template <typename Connection>
-    void parse_ping_received(Connection& connection, const char* data, std::size_t size)
+    void parse_ping_received(Connection& connection, util::StringView msg_data)
     {
         util::Logger& logger = connection.logger;
 
-        util::MemoryInputStream in;
-        in.set_buffer(data, data + size);
-        in.unsetf(std::ios_base::skipws);
-
         milliseconds_type timestamp, rtt;
-
-        char sp_1 = 0, newline = 0;
-        in >> timestamp >> sp_1 >> rtt >> newline;
-        std::size_t expected_size = std::size_t(in.tellg());
-        bool good_syntax = (in && sp_1 == ' ' && newline == '\n' && expected_size == size);
-        if (!good_syntax)
-            goto bad_syntax;
+        auto sw_msg_data = parse_header_line(msg_data, '\n', timestamp, rtt);
+        if (!sw_msg_data.is_ok()) {
+            logger.error("Bad syntax in PING message %1", sw_msg_data.get_status());
+            connection.handle_protocol_error(Error::bad_syntax);
+            return;
+        }
 
         connection.receive_ping(timestamp, rtt);
-        return;
-
-    bad_syntax:
-        logger.error("Bad syntax in PING message '%1'", StringData(data, size));
-        connection.handle_protocol_error(Error::bad_syntax);
-        return;
     }
 
     // UploadChangeset is used to store received changesets in
@@ -524,60 +435,63 @@ public:
     // The result of the parsing is handled by an object of type Connection.
     // Typically, Connection would be the Connection class from server.cpp
     template <class Connection>
-    void parse_message_received(Connection& connection, const char* data, std::size_t size)
+    void parse_message_received(Connection& connection, util::StringView msg_data)
     {
         util::Logger& logger = connection.logger;
 
-        util::MemoryInputStream in;
-        in.set_buffer(data, data + size);
-        in.unsetf(std::ios_base::skipws);
-        std::size_t header_size = 0;
-        std::string message_type;
-        in >> message_type;
+        auto report_error = [&](Error err, const auto fmt, auto&&... args) {
+            logger.error(fmt, args...);
+            connection.handle_protocol_error(err);
+        };
 
-        int protocol_version = connection.get_client_protocol_version();
-        static_cast<void>(protocol_version); // No divergent protocol behavior (yet).
+        auto parse_and_check_msg_data = [&](const auto what, char end_delim, auto&&... args) {
+            auto sw_msg_data = parse_header_line_nothrow(msg_data, end_delim, args...);
+            if (!sw_msg_data.is_ok()) {
+                report_error(Error::bad_syntax, "Bad syntax in %1: %2", what, sw_msg_data.get_status());
+                return false;
+            }
+            msg_data = sw_msg_data.get_value();
+            return true;
+        };
+
+        util::StringView message_type;
+        if (!parse_and_check_msg_data("wire protocol message type", ' ', message_type)) {
+            return;
+        }
 
         if (message_type == "upload") {
             session_ident_type session_ident;
-            int is_body_compressed;
+            bool is_body_compressed;
             std::size_t uncompressed_body_size, compressed_body_size;
             version_type progress_client_version, progress_server_version;
             version_type locked_server_version;
-            char sp_1, sp_2, sp_3, sp_4, sp_5, sp_6, sp_7, newline;
-            in >> sp_1 >> session_ident >> sp_2 >> is_body_compressed >> sp_3 >> uncompressed_body_size >> sp_4 >>
-                compressed_body_size;
-            in >> sp_5 >> progress_client_version >> sp_6 >> progress_server_version >> sp_7 >> locked_server_version;
-            in >> newline;
-            header_size = std::size_t(in.tellg());
-            std::size_t body_size = (is_body_compressed ? compressed_body_size : uncompressed_body_size);
-            std::size_t expected_size = header_size + body_size;
-            bool good_syntax = (in && sp_1 == ' ' && sp_2 == ' ' && sp_3 == ' ' && sp_4 == ' ' && sp_5 == ' ' &&
-                                sp_6 == ' ' && sp_7 == ' ' && newline == '\n' && expected_size == size);
-            if (!good_syntax)
-                goto bad_syntax;
-            if (uncompressed_body_size > s_max_body_size)
-                goto limits_exceeded;
 
-            BinaryData body(data + header_size, body_size);
-            BinaryData uncompressed_body;
+            auto msg_with_header = msg_data;
+            if (!parse_and_check_msg_data("UPLOAD message", '\n', session_ident, is_body_compressed,
+                                          uncompressed_body_size, compressed_body_size, progress_client_version,
+                                          progress_server_version, locked_server_version)) {
+                return;
+            }
+            std::size_t body_size = (is_body_compressed ? compressed_body_size : uncompressed_body_size);
+            if (body_size > s_max_body_size) {
+                auto header = msg_with_header.substr(std::distance(msg_with_header.begin(), msg_data.begin()));
+                return report_error(Error::limits_exceeded,
+                                    "Body size of upload message is too large. Raw header: %1", header);
+            }
+
+            util::StringView uncompressed_body = msg_data;
             std::unique_ptr<char[]> uncompressed_body_buffer;
             // if is_body_compressed == true, we must decompress the received body.
             if (is_body_compressed) {
                 uncompressed_body_buffer.reset(new char[uncompressed_body_size]);
                 std::error_code ec = _impl::compression::decompress(
-                    body.data(), compressed_body_size, uncompressed_body_buffer.get(), uncompressed_body_size);
+                    msg_data.data(), compressed_body_size, uncompressed_body_buffer.get(), uncompressed_body_size);
 
                 if (ec) {
-                    logger.error("compression::inflate: %1", ec.message());
-                    connection.handle_protocol_error(Error::bad_decompression);
-                    return;
+                    return report_error(Error::bad_decompression, "compression::inflate: %1", ec.message());
                 }
 
-                uncompressed_body = BinaryData(uncompressed_body_buffer.get(), uncompressed_body_size);
-            }
-            else {
-                uncompressed_body = body;
+                uncompressed_body = util::StringView(uncompressed_body_buffer.get(), uncompressed_body_size);
             }
 
             logger.debug("Upload message compression: is_body_compressed = %1, "
@@ -594,37 +508,28 @@ public:
             std::vector<UploadChangeset> upload_changesets;
 
             // Loop through the body and find the changesets.
-            std::size_t position = 0;
-            while (position < uncompressed_body_size) {
+            while (!uncompressed_body.empty()) {
                 version_type client_version;
                 version_type server_version;
                 timestamp_type origin_timestamp;
                 file_ident_type origin_file_ident;
                 std::size_t changeset_size;
-                char sp_1, sp_2, sp_3, sp_4, sp_5;
 
-                in >> client_version >> sp_1 >> server_version >> sp_2 >> origin_timestamp >> sp_3 >>
-                    origin_file_ident >> sp_4 >> changeset_size >> sp_5;
+                auto sw_uncompressed_body = parse_header_line(uncompressed_body, ' ', client_version, server_version,
+                                                              origin_timestamp, origin_file_ident, changeset_size);
 
-                bool good_syntax = in && sp_1 == ' ' && sp_2 == ' ' && sp_3 == ' ' && sp_4 == ' ' && sp_5 == ' ';
+                if (!sw_uncompressed_body.is_ok()) {
+                    return report_error(Error::bad_changeset_header_syntax, "Bad changeset header syntax: %1",
+                                        sw_uncompressed_body.get_status());
+                }
+                uncompressed_body = sw_uncompressed_body.get_value();
 
-                if (!good_syntax) {
-                    logger.error("Bad changeset header syntax");
-                    connection.handle_protocol_error(Error::bad_changeset_header_syntax);
-                    return;
+                if (changeset_size > uncompressed_body.size()) {
+                    return report_error(Error::bad_changeset_size, "Bad changeset size");
                 }
 
-                // Update position to the end of the change set
-                position = std::size_t(in.tellg()) + changeset_size;
-
-                if (position > uncompressed_body_size) {
-                    logger.error("Bad changeset size");
-                    connection.handle_protocol_error(Error::bad_changeset_size);
-                    return;
-                }
-
-                BinaryData changeset_data(uncompressed_body.data() + std::size_t(in.tellg()), changeset_size);
-                in.seekg(position);
+                BinaryData changeset_data(uncompressed_body.data(), changeset_size);
+                uncompressed_body = uncompressed_body.substr(changeset_size);
 
                 if (logger.would_log(util::Logger::Level::trace)) {
                     logger.trace("Received: UPLOAD CHANGESET(client_version=%1, server_version=%2, "
@@ -644,150 +549,103 @@ public:
             connection.receive_upload_message(session_ident, progress_client_version, progress_server_version,
                                               locked_server_version,
                                               upload_changesets); // Throws
-            return;
         }
-        if (message_type == "mark") {
+        else if (message_type == "mark") {
             session_ident_type session_ident;
             request_ident_type request_ident;
-            char sp_1, sp_2, newline;
-            in >> sp_1 >> session_ident >> sp_2 >> request_ident >> newline;
-            header_size = std::size_t(in.tellg());
-            std::size_t expected_size = header_size;
-            bool good_syntax = (in && sp_1 == ' ' && sp_2 == ' ' && newline == '\n' && expected_size == size);
-            if (!good_syntax)
-                goto bad_syntax;
+            if (!parse_and_check_msg_data("MARK message", '\n', session_ident, request_ident)) {
+                return;
+            }
 
             connection.receive_mark_message(session_ident, request_ident); // Throws
-            return;
         }
-        if (message_type == "ping") {
+        else if (message_type == "ping") {
             milliseconds_type timestamp, rtt;
-
-            char sp_1 = 0, sp_2 = 0, newline = 0;
-            in >> sp_1 >> timestamp >> sp_2 >> rtt >> newline;
-            std::size_t expected_size = std::size_t(in.tellg());
-
-            bool good_syntax = (in && sp_1 == ' ' && sp_2 == ' ' && newline == '\n' && expected_size == size);
-            if (!good_syntax)
-                goto bad_syntax;
+            if (!parse_and_check_msg_data("PING message", '\n', timestamp, rtt)) {
+                return;
+            }
 
             connection.receive_ping(timestamp, rtt);
-            return;
         }
-        if (message_type == "bind") {
+        else if (message_type == "bind") {
             session_ident_type session_ident;
             std::size_t path_size;
             std::size_t signed_user_token_size;
             bool need_client_file_ident;
             bool is_subserver;
-            char sp_1, sp_2, sp_3, sp_4, sp_5, newline;
-            in >> sp_1 >> session_ident >> sp_2 >> path_size >> sp_3 >> signed_user_token_size >> sp_4 >>
-                need_client_file_ident >> sp_5 >> is_subserver >> newline;
-            header_size = std::size_t(in.tellg());
-            std::size_t expected_size = header_size + path_size + signed_user_token_size;
-            bool good_syntax = (in && sp_1 == ' ' && sp_2 == ' ' && sp_3 == ' ' && sp_4 == ' ' && sp_5 == ' ' &&
-                                newline == '\n' && expected_size == size && path_size != 0);
-            if (!good_syntax)
-                goto bad_syntax;
-            if (path_size > s_max_path_size)
-                goto limits_exceeded;
-            if (signed_user_token_size > s_max_signed_user_token_size)
-                goto limits_exceeded;
+            if (!parse_and_check_msg_data("BIND message", '\n', session_ident, path_size, signed_user_token_size,
+                                          need_client_file_ident, is_subserver)) {
+                return;
+            }
 
-            std::string path{data + header_size, path_size}; // Throws
-            std::string signed_user_token(data + header_size + path_size,
-                                          signed_user_token_size); // Throws
+            if (path_size == 0) {
+                return report_error(Error::bad_syntax, "Path size in BIND message is zero");
+            }
+            if (path_size > s_max_path_size) {
+                return report_error(Error::limits_exceeded, "Path size in BIND message is too large");
+            }
+            if (signed_user_token_size > s_max_signed_user_token_size) {
+                return report_error(Error::limits_exceeded, "Signed user token size in BIND message is too large");
+            }
+
+            std::string path = static_cast<std::string>(msg_data.substr(0, path_size));
+            std::string signed_user_token =
+                static_cast<std::string>(msg_data.substr(path_size, signed_user_token_size));
+            msg_data = msg_data.substr(path_size + signed_user_token_size);
 
             connection.receive_bind_message(session_ident, std::move(path), std::move(signed_user_token),
                                             need_client_file_ident, is_subserver); // Throws
-            return;
         }
-        if (message_type == "refresh") {
+        else if (message_type == "refresh") {
             session_ident_type session_ident;
             std::size_t signed_user_token_size;
-            char sp_1, sp_2, newline;
-            in >> sp_1 >> session_ident >> sp_2 >> signed_user_token_size >> newline;
-            header_size = std::size_t(in.tellg());
-            std::size_t expected_size = header_size + signed_user_token_size;
-            bool good_syntax = (in && sp_1 == ' ' && sp_2 == ' ' && newline == '\n' && expected_size == size);
-            if (!good_syntax)
-                goto bad_syntax;
+            if (!parse_and_check_msg_data("REFRESH message", '\n', session_ident, signed_user_token_size)) {
+                return;
+            }
             if (signed_user_token_size > s_max_signed_user_token_size)
-                goto limits_exceeded;
+                return report_error(Error::limits_exceeded, "Signed user token in REFRESH message is too large");
 
-            std::string signed_user_token{data + header_size, signed_user_token_size};
+            std::string signed_user_token = static_cast<std::string>(msg_data.substr(0, signed_user_token_size));
+            msg_data = msg_data.substr(signed_user_token_size);
 
             connection.receive_refresh_message(session_ident, std::move(signed_user_token)); // Throws
-            return;
         }
-        if (message_type == "ident") {
+        else if (message_type == "ident") {
             session_ident_type session_ident;
             file_ident_type client_file_ident;
             salt_type client_file_ident_salt;
             version_type scan_server_version, scan_client_version, latest_server_version;
             salt_type latest_server_version_salt;
-            char sp_1, sp_2, sp_3, sp_4, sp_5, sp_6, sp_7, sp_8, newline;
-            in >> sp_1 >> session_ident >> sp_2 >> client_file_ident >> sp_3 >> client_file_ident_salt >> sp_4 >>
-                scan_server_version >> sp_5 >> scan_client_version >> sp_6 >> latest_server_version >> sp_7 >>
-                latest_server_version_salt >> newline;
-            sp_8 = ' ';
-            header_size = std::size_t(in.tellg());
-            std::size_t expected_size = header_size;
-            bool good_syntax =
-                (in && sp_1 == ' ' && sp_2 == ' ' && sp_3 == ' ' && sp_4 == ' ' && sp_5 == ' ' && sp_6 == ' ' &&
-                 sp_7 == ' ' && sp_8 == ' ' && newline == '\n' && expected_size == size);
-            if (!good_syntax)
-                goto bad_syntax;
+
+            if (!parse_and_check_msg_data("IDENT message", '\n', session_ident, client_file_ident,
+                                          client_file_ident_salt, scan_server_version, scan_client_version,
+                                          latest_server_version, latest_server_version_salt)) {
+                return;
+            }
 
             connection.receive_ident_message(session_ident, client_file_ident, client_file_ident_salt,
                                              scan_server_version, scan_client_version, latest_server_version,
                                              latest_server_version_salt); // Throws
-            return;
         }
-        if (message_type == "alloc") {
+        else if (message_type == "alloc") {
             session_ident_type session_ident;
-            char sp_1, newline;
-            in >> sp_1 >> session_ident >> newline;
-            header_size = std::size_t(in.tellg());
-            std::size_t expected_size = header_size;
-            bool good_syntax = (in && sp_1 == ' ' && newline == '\n' && expected_size == size);
-            if (!good_syntax)
-                goto bad_syntax;
+            if (!parse_and_check_msg_data("ALLOC message", '\n', session_ident)) {
+                return;
+            }
 
             connection.receive_alloc_message(session_ident); // Throws
-            return;
         }
-        if (message_type == "unbind") {
+        else if (message_type == "unbind") {
             session_ident_type session_ident;
-            char sp_1, newline;
-            in >> sp_1 >> session_ident >> newline;
-            header_size = std::size_t(in.tellg());
-            std::size_t expected_size = header_size;
-            bool good_syntax = (in && sp_1 == ' ' && newline == '\n' && expected_size == size);
-            if (!good_syntax)
-                goto bad_syntax;
+            if (!parse_and_check_msg_data("UNBIND message", '\n', session_ident)) {
+                return;
+            }
 
             connection.receive_unbind_message(session_ident); // Throws
-            return;
         }
-
-        // unknown message
-        if (size < 256)
-            logger.error("Unknown input message type '%1'", StringData(data, size)); // Throws
-        else
-            logger.error("Unknown input message type '%1'.......", StringData(data, 256)); // Throws
-
-        connection.handle_protocol_error(Error::unknown_message);
-        return;
-
-    bad_syntax:
-        logger.error("Bad syntax in input message '%1'", StringData(data, size));
-        connection.handle_protocol_error(Error::bad_syntax); // Throws
-        return;
-    limits_exceeded:
-        logger.error("Limits exceeded in input message '%1'", StringData(data, header_size));
-        connection.handle_protocol_error(Error::limits_exceeded); // Throws
-        return;
+        else {
+            return report_error(Error::unknown_message, "unknown message type %1", message_type);
+        }
     }
 
     void insert_single_changeset_download_message(OutputBuffer&, const ChangesetInfo&, util::Logger&);
