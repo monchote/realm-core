@@ -120,7 +120,6 @@ protected:
     // Replication interface:
     void do_initiate_transact(Group& group, version_type current_version, bool history_updated) override;
 
-private:
     bool m_short_circuit = false;
 
     ChangesetEncoder m_encoder;

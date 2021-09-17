@@ -13,9 +13,8 @@
 #include <realm/sync/instruction_replication.hpp>
 #include <realm/sync/instruction_applier.hpp>
 
-using namespace realm;
-
-using _impl::ClientHistoryImpl;
+namespace realm {
+namespace _impl {
 
 void ClientHistoryImpl::set_initial_state_realm_history_numbers(version_type current_version,
                                                                 sync::SaltedVersion server_version)
@@ -161,35 +160,35 @@ void ClientHistoryImpl::initialize(DB& sg)
 
 
 // Overriding member function in realm::Replication
-void ClientHistoryImpl::initiate_session(version_type)
+void ClientReplicationImpl::initiate_session(version_type)
 {
     // No-op
 }
 
 
 // Overriding member function in realm::Replication
-void ClientHistoryImpl::terminate_session() noexcept
+void ClientReplicationImpl::terminate_session() noexcept
 {
     // No-op
 }
 
 
 // Overriding member function in realm::Replication
-auto ClientHistoryImpl::get_history_type() const noexcept -> HistoryType
+auto ClientReplicationImpl::get_history_type() const noexcept -> HistoryType
 {
     return hist_SyncClient;
 }
 
 
 // Overriding member function in realm::Replication
-int ClientHistoryImpl::get_history_schema_version() const noexcept
+int ClientReplicationImpl::get_history_schema_version() const noexcept
 {
     return get_client_history_schema_version();
 }
 
 
 // Overriding member function in realm::Replication
-bool ClientHistoryImpl::is_upgradable_history_schema(int stored_schema_version) const noexcept
+bool ClientReplicationImpl::is_upgradable_history_schema(int stored_schema_version) const noexcept
 {
     if (stored_schema_version == 11) {
         return true;
@@ -199,7 +198,7 @@ bool ClientHistoryImpl::is_upgradable_history_schema(int stored_schema_version) 
 
 
 // Overriding member function in realm::Replication
-void ClientHistoryImpl::upgrade_history_schema(int stored_schema_version)
+void ClientReplicationImpl::upgrade_history_schema(int stored_schema_version)
 {
     // upgrade_history_schema() is called only when there is a need to upgrade
     // (`stored_schema_version < get_server_history_schema_version()`), and only
@@ -219,27 +218,33 @@ void ClientHistoryImpl::upgrade_history_schema(int stored_schema_version)
 }
 
 // Overriding member function in realm::Replication
-_impl::History* ClientHistoryImpl::_get_history_write()
+_impl::History* ClientReplicationImpl::_get_history_write()
 {
     // REALM_ASSERT(m_group != nullptr);
-    return this;
+    return &m_history;
 }
 
 // Overriding member function in realm::Replication
-std::unique_ptr<_impl::History> ClientHistoryImpl::_create_history_read()
+std::unique_ptr<_impl::History> ClientReplicationImpl::_create_history_read()
 {
-    auto hist_impl = std::make_unique<ClientHistoryImpl>(get_database_path());
+    auto hist_impl = std::make_unique<ClientHistoryImpl>();
     hist_impl->initialize(*m_db); // Throws
     // Transfer ownership with pointer to private base class
     return std::unique_ptr<_impl::History>{hist_impl.release()};
 }
 
 // Overriding member function in realm::Replication
-void ClientHistoryImpl::do_initiate_transact(Group& group, version_type version, bool history_updated)
+void ClientReplicationImpl::do_initiate_transact(Group& group, version_type version, bool history_updated)
 {
     SyncReplication::do_initiate_transact(group, version, history_updated);
 }
 
+// Overriding member function in realm::TrivialReplication
+auto ClientReplicationImpl::prepare_changeset(const char* data, size_t size, version_type orig_version)
+    -> version_type
+{
+    m_history.prepare_changeset(data, size, orig_version);
+}
 // Overriding member function in realm::TrivialReplication
 auto ClientHistoryImpl::prepare_changeset(const char* data, size_t size, version_type orig_version) -> version_type
 {
@@ -618,27 +623,6 @@ void ClientHistoryImpl::get_upload_download_bytes(DB* db, std::uint_fast64_t& do
         uploadable_bytes = root.get_as_ref_or_tagged(s_progress_uploadable_bytes_iip).get_as_int();
         uploaded_bytes = root.get_as_ref_or_tagged(s_progress_uploaded_bytes_iip).get_as_int();
     }
-}
-
-// Overriding member function in realm::sync::ClientHistory
-auto ClientHistoryImpl::get_upload_anchor_of_current_transact(const Transaction& tr) const -> UploadCursor
-{
-    REALM_ASSERT(tr.get_transact_stage() != DB::transact_Ready);
-    version_type current_version = tr.get_version();
-    ensure_updated(current_version); // Throws
-    UploadCursor upload_anchor;
-    upload_anchor.client_version = current_version;
-    upload_anchor.last_integrated_server_version = m_progress_download.server_version;
-    return upload_anchor;
-}
-
-// Overriding member function in realm::sync::ClientHistory
-util::StringView ClientHistoryImpl::get_sync_changeset_of_current_transact(const Transaction& tr) const noexcept
-{
-    REALM_ASSERT(tr.get_transact_stage() == DB::transact_Writing);
-    const sync::ChangesetEncoder& encoder = get_instruction_encoder();
-    const sync::ChangesetEncoder::Buffer& buffer = encoder.buffer();
-    return {buffer.data(), buffer.size()};
 }
 
 // Overriding member function in realm::sync::TransformHistory
@@ -1392,3 +1376,6 @@ void ClientHistoryImpl::Arrays::verify() const
     REALM_ASSERT(origin_timestamps.size() == changesets.size());
 #endif // REALM_DEBUG
 }
+
+} // namespace _impl
+} // namespace realm

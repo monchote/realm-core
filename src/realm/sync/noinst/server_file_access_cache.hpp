@@ -121,7 +121,7 @@ private:
 
 class ServerFileAccessCache::File {
 public:
-    ServerHistory history;
+    ServerReplicationImpl history;
     DBRef shared_group;
 
 private:

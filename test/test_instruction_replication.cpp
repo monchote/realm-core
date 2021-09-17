@@ -16,8 +16,8 @@ struct Fixture {
     unit_test::TestContext& test_context;
     DBTestPathGuard path_1;
     DBTestPathGuard path_2;
-    std::unique_ptr<ClientReplication> history_1;
-    std::unique_ptr<ClientReplication> history_2;
+    std::unique_ptr<Replication> history_1;
+    std::unique_ptr<Replication> history_2;
     DBRef sg_1;
     DBRef sg_2;
 

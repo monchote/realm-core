@@ -4,9 +4,9 @@
 namespace realm {
 namespace sync {
 
-std::unique_ptr<ClientReplication> make_client_replication(const std::string& realm_path)
+std::unique_ptr<Replication> make_client_replication(const std::string& realm_path)
 {
-    return std::make_unique<_impl::ClientHistoryImpl>(realm_path); // Throws
+    return std::make_unique<_impl::ClientReplicationImpl>(realm_path); // Throws
 }
 
 } // namespace sync

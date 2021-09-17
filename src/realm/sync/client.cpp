@@ -21,7 +21,7 @@ using namespace realm::util;
 
 // clang-format off
 using ClientImplBase                  = _impl::ClientImplBase;
-using SyncTransactReporter            = ClientReplication::SyncTransactReporter;
+using SyncTransactReporter            = ClientHistory::SyncTransactReporter;
 using SyncTransactCallback            = Session::SyncTransactCallback;
 using ProgressHandler                 = Session::ProgressHandler;
 using WaitOperCompletionHandler       = Session::WaitOperCompletionHandler;
@@ -293,7 +293,7 @@ public:
     SessionWrapper(ClientImpl&, DBRef db, Session::Config);
     ~SessionWrapper() noexcept;
 
-    ClientReplication& get_history() noexcept;
+    ClientHistory& get_history() noexcept;
     ClientImpl& get_client() noexcept;
 
     void set_sync_transact_handler(std::function<SyncTransactCallback>);
@@ -1023,7 +1023,7 @@ DB& SessionImpl::get_db() const noexcept
     return *m_wrapper.m_db;
 }
 
-ClientReplicationBase& SessionImpl::access_realm()
+ClientHistory& SessionImpl::access_realm()
 {
     return m_wrapper.get_history();
 }
@@ -1101,7 +1101,7 @@ SessionWrapper::SessionWrapper(ClientImpl& client, DBRef db, Session::Config con
 {
     REALM_ASSERT(m_db);
     REALM_ASSERT(m_db->get_replication());
-    REALM_ASSERT(dynamic_cast<ClientReplication*>(m_db->get_replication()));
+    REALM_ASSERT(dynamic_cast<ClientHistory*>(m_db->get_replication()));
 }
 
 SessionWrapper::~SessionWrapper() noexcept
@@ -1111,9 +1111,9 @@ SessionWrapper::~SessionWrapper() noexcept
 }
 
 
-inline ClientReplication& SessionWrapper::get_history() noexcept
+inline ClientHistory& SessionWrapper::get_history() noexcept
 {
-    return static_cast<ClientReplication&>(*m_history);
+    return static_cast<ClientHistory&>(*m_history);
 }
 
 

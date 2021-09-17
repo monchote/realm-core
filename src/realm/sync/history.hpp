@@ -47,7 +47,7 @@ timestamp_type generate_changeset_timestamp() noexcept;
 // arguments.
 void map_changeset_timestamp(timestamp_type, std::time_t& seconds_since_epoch, long& nanoseconds) noexcept;
 
-class ClientReplicationBase : public SyncReplication {
+class ClientHistory : public _impl::History {
 public:
     using SyncTransactCallback = void(VersionID old_version, VersionID new_version);
 
@@ -209,38 +209,6 @@ public:
                                              util::Logger&, SyncTransactReporter* transact_reporter = nullptr) = 0;
 
 protected:
-    ClientReplicationBase(const std::string& realm_path);
-};
-
-
-class ClientReplication : public ClientReplicationBase {
-public:
-    /// Get the persisted upload/download progress in bytes.
-    virtual void get_upload_download_bytes(std::uint_fast64_t& downloaded_bytes,
-                                           std::uint_fast64_t& downloadable_bytes, std::uint_fast64_t& uploaded_bytes,
-                                           std::uint_fast64_t& uploadable_bytes,
-                                           std::uint_fast64_t& snapshot_version) = 0;
-
-    /// Return an upload cursor as it would be when the uploading process
-    /// reaches the snapshot to which the current transaction is bound.
-    ///
-    /// **CAUTION:** Must be called only while a transaction (read or write) is
-    /// in progress via the SharedGroup object associated with this history
-    /// object.
-    virtual UploadCursor get_upload_anchor_of_current_transact(const Transaction&) const = 0;
-
-    /// Return the synchronization changeset of the current transaction as it
-    /// would be if that transaction was committed at this time.
-    ///
-    /// The returned memory reference may be invalidated by subsequent
-    /// operations on the Realm state.
-    ///
-    /// **CAUTION:** Must be called only while a write transaction is in
-    /// progress via the SharedGroup object associated with this history object.
-    virtual util::StringView get_sync_changeset_of_current_transact(const Transaction&) const noexcept = 0;
-
-protected:
-    ClientReplication(const std::string& realm_path);
 };
 
 
@@ -249,15 +217,10 @@ protected:
 ///
 /// The intended role for such an object is as a plugin for new
 /// realm::DB objects.
-std::unique_ptr<ClientReplication> make_client_replication(const std::string& realm_path);
+std::unique_ptr<Replication> make_client_replication(const std::string& realm_path);
 
 
 // Implementation
-
-inline ClientReplicationBase::ClientReplicationBase(const std::string& realm_path)
-    : SyncReplication{realm_path} // Throws
-{
-}
 
 inline timestamp_type generate_changeset_timestamp() noexcept
 {
@@ -292,11 +255,6 @@ inline void map_changeset_timestamp(timestamp_type timestamp, std::time_t& secon
     std::uint_fast64_t millis_since_epoch = std::uint_fast64_t(offset_in_millis + timestamp);
     seconds_since_epoch = std::time_t(millis_since_epoch / 1000);
     nanoseconds = long(millis_since_epoch % 1000 * 1000000L);
-}
-
-inline ClientReplication::ClientReplication(const std::string& realm_path)
-    : ClientReplicationBase{realm_path} // Throws
-{
 }
 
 } // namespace sync

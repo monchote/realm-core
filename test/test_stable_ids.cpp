@@ -16,12 +16,12 @@ using namespace realm::sync;
 namespace {
 
 struct MakeClientHistory {
-    static std::unique_ptr<ClientReplication> make_history(const std::string& realm_path)
+    static std::unique_ptr<ClientHistory> make_history(const std::string& realm_path)
     {
         return realm::sync::make_client_replication(realm_path);
     }
 
-    static file_ident_type get_client_file_ident(ClientReplication& history)
+    static file_ident_type get_client_file_ident(ClientHistory& history)
     {
         version_type current_client_version;
         SaltedFileIdent client_file_ident;
@@ -191,7 +191,7 @@ TEST(StableIDs_ChangesGlobalObjectIdWhenPeerIdReceived)
 
     // Save the changeset to replay later
     UploadCursor upload_cursor{0, 0};
-    std::vector<ClientReplication::UploadChangeset> changesets;
+    std::vector<ClientHistory::UploadChangeset> changesets;
     version_type locked_server_version; // Dummy
     history->find_uploadable_changesets(upload_cursor, 2, changesets, locked_server_version);
     CHECK_GREATER_EQUAL(changesets.size(), 1);

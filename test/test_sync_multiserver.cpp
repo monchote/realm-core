@@ -206,7 +206,7 @@ TEST(Sync_Multiserver_MultipleClientsPer2ndtierServer)
 
     TEST_DIR(dir_2);
     const int n_1 = num_2ndtier_servers, n_2 = num_clients_per_2ndtier_server;
-    std::unique_ptr<ClientReplication> histories[n_1][n_2];
+    std::unique_ptr<ClientHistory> histories[n_1][n_2];
     DBRef shared_groups[n_1][n_2];
     Session sessions[n_1][n_2];
     for (int i = 0; i < num_2ndtier_servers; ++i) {
@@ -325,7 +325,7 @@ TEST(Sync_Multiserver_ManyTiers)
 
     TEST_DIR(dir_2);
     const int n_1 = num_tiers, n_2 = num_clients_per_tier;
-    std::unique_ptr<ClientReplication> histories[n_1][n_2];
+    std::unique_ptr<ClientHistory> histories[n_1][n_2];
     DBRef shared_groups[n_1][n_2];
     Session sessions[n_1][n_2];
     for (int i = 0; i < num_tiers; ++i) {
@@ -444,7 +444,7 @@ TEST(Sync_Multiserver_PartialSync)
     fixture.start();
 
     const int n_1 = num_tiers, n_2 = num_clients_per_tier;
-    std::unique_ptr<ClientReplication> histories[n_1][n_2];
+    std::unique_ptr<ClientHistory> histories[n_1][n_2];
     DBRef shared_groups[n_1][n_2];
     Session sessions[n_1][n_2];
     for (int i = 0; i < num_tiers; ++i) {
@@ -616,7 +616,7 @@ TEST(Sync_Multiserver_ServerSideModify)
     _impl::ServerHistory::DummyCompactionControl compaction_control;
     std::unique_ptr<_impl::ServerHistory> server_histories[n_1];
     DBRef server_shared_groups[n_1];
-    std::unique_ptr<ClientReplication> client_histories[n_1][n_2];
+    std::unique_ptr<ClientHistory> client_histories[n_1][n_2];
     DBRef client_shared_groups[n_1][n_2];
     Session sessions[n_1][n_2];
     for (int i = 0; i < num_tiers; ++i) {

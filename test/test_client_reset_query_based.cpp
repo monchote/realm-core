@@ -45,7 +45,7 @@ TEST_IF(ClientResetQueryBased_1, false)
 
         // Create the data and upload it to the reference Realm.
         {
-            std::unique_ptr<ClientReplication> history = make_client_replication(path_1);
+            std::unique_ptr<ClientHistory> history = make_client_replication(path_1);
             DBRef sg = DB::create(*history);
             Session session = fixture.make_session(path_1);
             fixture.bind_session(session, ref_path);
@@ -62,7 +62,7 @@ TEST_IF(ClientResetQueryBased_1, false)
 
         // Create a partial client and add a query.
         {
-            std::unique_ptr<ClientReplication> history = make_client_replication(path_2);
+            std::unique_ptr<ClientHistory> history = make_client_replication(path_2);
             DBRef sg = DB::create(*history);
             Session session = fixture.make_session(path_2);
             fixture.bind_session(session, partial_path);

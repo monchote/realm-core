@@ -48,7 +48,7 @@ constexpr int get_client_history_schema_version() noexcept
     return 11;
 }
 
-class ClientHistoryImpl : public sync::ClientReplication, private History, public sync::TransformHistory {
+class ClientHistoryImpl : private sync::ClientHistory, public sync::TransformHistory {
 public:
     using file_ident_type = sync::file_ident_type;
     using version_type = sync::version_type;
@@ -69,7 +69,6 @@ public:
         ChunkedBinaryData changeset;
     };
 
-    ClientHistoryImpl(const std::string& realm_path);
 
     /// set_client_file_ident_and_downloaded_bytes() sets the salted client
     /// file ident and downloaded_bytes. The function is used when a state
@@ -111,21 +110,7 @@ public:
     /// sync::generate_changeset_timestamp().
     void set_local_origin_timestamp_source(std::function<sync::timestamp_type()> source_fn);
 
-    // Overriding member functions in realm::Replication
-    void initialize(DB& sg) override final;
-    void initiate_session(version_type) override final;
-    void terminate_session() noexcept override final;
-    HistoryType get_history_type() const noexcept override final;
-    int get_history_schema_version() const noexcept override final;
-    bool is_upgradable_history_schema(int) const noexcept override final;
-    void upgrade_history_schema(int) override final;
-    History* _get_history_write() override;
-    std::unique_ptr<History> _create_history_read() override;
-    void do_initiate_transact(Group& group, version_type version, bool history_updated) override final;
-
-    // Overriding member functions in realm::TrivialReplication
-    version_type prepare_changeset(const char*, size_t, version_type) override final;
-    void finalize_changeset() noexcept override final;
+    void initialize(DB& sg);
 
     // Overriding member functions in realm::sync::ClientReplicationBase
     void get_status(version_type&, SaltedFileIdent&, SyncProgress&) const override final;
@@ -141,9 +126,7 @@ public:
                                           std::uint_fast64_t&, std::uint_fast64_t&);
     // Overriding member functions in realm::sync::ClientHistory
     void get_upload_download_bytes(std::uint_fast64_t&, std::uint_fast64_t&, std::uint_fast64_t&, std::uint_fast64_t&,
-                                   std::uint_fast64_t&) override final;
-    UploadCursor get_upload_anchor_of_current_transact(const Transaction&) const override final;
-    util::StringView get_sync_changeset_of_current_transact(const Transaction&) const noexcept override final;
+                                   std::uint_fast64_t&);
 
     // Overriding member functions in realm::sync::TransformHistory
     version_type find_history_entry(version_type, version_type, HistoryEntry&) const noexcept override final;
@@ -299,18 +282,39 @@ private:
     void update_from_parent(version_type current_version) override final;
     void get_changesets(version_type, version_type, BinaryIterator*) const noexcept override final;
     void set_oldest_bound_version(version_type) override final;
-    BinaryData get_uncommitted_changes() const noexcept override final;
     void verify() const override final;
     bool no_pending_local_changes(version_type version) const final;
 };
 
+class ClientReplicationImpl : public sync::SyncReplication {
+public:
+    ClientReplicationImpl(const std::string& realm_path)
+        : SyncReplication(realm_path)
+    {
+    }
+
+    // Overriding member functions in realm::Replication
+    void initiate_session(version_type) override final;
+    void terminate_session() noexcept override final;
+    HistoryType get_history_type() const noexcept override final;
+    int get_history_schema_version() const noexcept override final;
+    bool is_upgradable_history_schema(int) const noexcept override final;
+    void upgrade_history_schema(int) override final;
+    History* _get_history_write() override;
+    std::unique_ptr<History> _create_history_read() override;
+    void do_initiate_transact(Group& group, version_type version, bool history_updated) override final;
+    BinaryData get_uncommitted_changes() const noexcept override final;
+
+    // Overriding member functions in realm::TrivialReplication
+    version_type prepare_changeset(const char*, size_t, version_type) override final;
+    void finalize_changeset() noexcept override final;
+
+private:
+    ClientHistoryImpl m_history;
+};
+
 
 // Implementation
-
-inline ClientHistoryImpl::ClientHistoryImpl(const std::string& realm_path)
-    : ClientReplication{realm_path}
-{
-}
 
 // Clamp the beginning of the specified upload skippable version range to the
 // beginning of the synchronization history.

@@ -114,7 +114,7 @@ void do_transform(const std::string& file_name, const char* read_key, const char
         case Replication::hist_SyncServer: {
             ServerHistoryContextImpl context;
             _impl::ServerHistory::DummyCompactionControl compaction_control;
-            _impl::ServerHistory history{file_name, context, compaction_control};
+            _impl::ServerReplicationImpl history{file_name, context, compaction_control};
             auto sg = DB::create(history, DBOptions(read_key));
             success = sg->compact(bump_version_number, write_key);
             break;

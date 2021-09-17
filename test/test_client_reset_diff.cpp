@@ -25,9 +25,9 @@ void check_common(test_util::unit_test::TestContext& test_context, util::Logger&
                   sync::SaltedFileIdent client_file_ident, uint_fast64_t downloaded_bytes)
 {
     DBOptions options{encryption_key ? encryption_key->data() : nullptr};
-    std::unique_ptr<ClientReplication> history_1 = make_client_replication(path_1);
+    std::unique_ptr<ClientHistory> history_1 = make_client_replication(path_1);
     DBRef sg_1 = DB::create(*history_1, options);
-    std::unique_ptr<ClientReplication> history_2 = make_client_replication(path_2);
+    std::unique_ptr<ClientHistory> history_2 = make_client_replication(path_2);
     DBRef sg_2 = DB::create(*history_2, options);
 
     // Check client_file_ident.
@@ -80,7 +80,7 @@ TEST(ClientResetDiff_TransferGroup)
 
     // Populate the source Realm.
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_src);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_src);
         DBRef sg = DB::create(*history);
         WriteTransaction wt{sg};
 
@@ -136,7 +136,7 @@ TEST(ClientResetDiff_TransferGroup)
 
     // Populate the destination Realm.
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_dst);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_dst);
         DBRef sg = DB::create(*history);
         WriteTransaction wt{sg};
         Group& group = wt.get_group();
@@ -222,12 +222,12 @@ TEST(ClientResetDiff_TransferGroup)
     }
 
     {
-        std::unique_ptr<ClientReplication> history_src = make_client_replication(path_src);
+        std::unique_ptr<ClientHistory> history_src = make_client_replication(path_src);
         DBRef sg_src = DB::create(*history_src);
         ReadTransaction rt{sg_src};
         TableInfoCache table_info_cache_src{rt};
 
-        std::unique_ptr<ClientReplication> history_dst = make_client_replication(path_dst);
+        std::unique_ptr<ClientHistory> history_dst = make_client_replication(path_dst);
         DBRef sg_dst = DB::create(*history_dst);
         WriteTransaction wt{sg_dst};
         TableInfoCache table_info_cache_dst{wt};
@@ -238,11 +238,11 @@ TEST(ClientResetDiff_TransferGroup)
     }
 
     {
-        std::unique_ptr<ClientReplication> history_src = make_client_replication(path_src);
+        std::unique_ptr<ClientHistory> history_src = make_client_replication(path_src);
         DBRef sg_src = DB::create(*history_src);
         ReadTransaction rt_src{sg_src};
 
-        std::unique_ptr<ClientReplication> history_dst = make_client_replication(path_dst);
+        std::unique_ptr<ClientHistory> history_dst = make_client_replication(path_dst);
         DBRef sg_dst = DB::create(*history_dst);
         ReadTransaction rt_dst{sg_dst};
 
@@ -263,7 +263,7 @@ TEST(ClientResetDiff_1)
 
 
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_1);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_1);
         DBRef sg = DB::create(*history);
         WriteTransaction wt{sg};
         {
@@ -426,14 +426,14 @@ TEST(ClientResetDiff_2)
         {
             UploadCursor upload_progress{2, server_version.version};
             version_type end_version = 3;
-            std::vector<sync::ClientReplication::UploadChangeset> changesets;
+            std::vector<sync::ClientHistory::UploadChangeset> changesets;
             version_type locked_server_version; // Dummy
             history.find_uploadable_changesets(upload_progress, end_version, changesets, locked_server_version);
 
             CHECK_EQUAL(upload_progress.client_version, 3);
             CHECK_EQUAL(upload_progress.last_integrated_server_version, server_version.version);
             CHECK_EQUAL(changesets.size(), 1);
-            const sync::ClientReplication::UploadChangeset& changeset = changesets[0];
+            const sync::ClientHistory::UploadChangeset& changeset = changesets[0];
             CHECK_EQUAL(changeset.origin_file_ident, 0);
             CHECK_EQUAL(changeset.progress.client_version, 3);
             CHECK_EQUAL(changeset.progress.last_integrated_server_version, server_version.version);
@@ -485,7 +485,7 @@ TEST(ClientResetDiff_FailedLocalRecovery)
 
     // The remote.
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_1);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_1);
         DBRef sg = DB::create(*history);
         WriteTransaction wt{sg};
 
@@ -499,7 +499,7 @@ TEST(ClientResetDiff_FailedLocalRecovery)
 
     // The local.
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_2);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_2);
         DBRef sg = DB::create(*history);
         WriteTransaction wt{sg};
 
@@ -531,7 +531,7 @@ TEST(ClientResetDiff_FailedLocalRecovery)
 
     // Check the content.
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_2);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_2);
         DBRef sg = DB::create(*history);
         {
             ReadTransaction rt{sg};
@@ -591,7 +591,7 @@ TEST(ClientResetDiff_ClientVersion)
 
     // The remote.
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_1);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_1);
         DBRef sg = DB::create(*history);
         WriteTransaction wt{sg};
 
@@ -610,7 +610,7 @@ TEST(ClientResetDiff_ClientVersion)
 
     // The local.
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_2);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_2);
         DBRef sg = DB::create(*history);
         ObjKeys obj_keys;
 
@@ -727,7 +727,7 @@ TEST(ClientResetDiff_ClientVersion)
 
     // Check the content.
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_2);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_2);
         DBRef sg = DB::create(*history);
         {
             ReadTransaction rt{sg};
@@ -798,7 +798,7 @@ TEST(ClientResetDiff_PrimitiveArrays)
 
     // The remote.
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_1);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_1);
         DBRef sg = DB::create(*history);
         WriteTransaction wt{sg};
 
@@ -828,7 +828,7 @@ TEST(ClientResetDiff_PrimitiveArrays)
 
     // The local.
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_2);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_2);
         DBRef sg = DB::create(*history);
 
         {
@@ -899,7 +899,7 @@ TEST(ClientResetDiff_PrimitiveArrays)
 
     // Check the content.
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_2);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_2);
         DBRef sg = DB::create(*history);
         {
             ReadTransaction rt{sg};
@@ -950,7 +950,7 @@ TEST(ClientResetDiff_NonSyncTables)
 
     // The remote.
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_1);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_1);
         DBRef sg = DB::create(*history);
         WriteTransaction wt{sg};
 
@@ -969,7 +969,7 @@ TEST(ClientResetDiff_NonSyncTables)
 
     // The local
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_2);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_2);
         DBRef sg = DB::create(*history);
         WriteTransaction wt{sg};
         Group& group = wt.get_group();
@@ -990,7 +990,7 @@ TEST(ClientResetDiff_NonSyncTables)
 
     // Check the content.
     {
-        std::unique_ptr<ClientReplication> history = make_client_replication(path_2);
+        std::unique_ptr<ClientHistory> history = make_client_replication(path_2);
         DBRef sg = DB::create(*history);
         {
             ReadTransaction rt{sg};

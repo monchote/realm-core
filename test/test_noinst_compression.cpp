@@ -448,11 +448,11 @@ TEST(Compression_RealmBlocksSmall)
     CHECK(files_compare_equal(src_path, unencrypted_path));
     CHECK(!files_compare_equal(src_path, encrypted_path));
     {
-        std::unique_ptr<ClientReplication> history_src = make_client_replication(src_path);
+        auto history_src = make_client_replication(src_path);
         DBRef sg_src = DB::create(*history_src);
-        std::unique_ptr<ClientReplication> history_unencrypted = make_client_replication(unencrypted_path);
+        auto history_unencrypted = make_client_replication(unencrypted_path);
         DBRef sg_unencrypted = DB::create(*history_unencrypted);
-        std::unique_ptr<ClientReplication> history_encrypted = make_client_replication(encrypted_path);
+        auto history_encrypted = make_client_replication(encrypted_path);
         DBOptions options{encryption_key ? encryption_key->data() : nullptr};
         DBRef sg_encrypted = DB::create(*history_encrypted, options);
         ReadTransaction rt_src{sg_src};

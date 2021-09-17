@@ -50,7 +50,7 @@ bool try_migrate_file(const std::string original_path, const std::string& new_pa
     _impl::ServerHistory::DummyCompactionControl compaction_control;
     Group legacy_group{original_path}; // Throws
     if (check_legacy_format_1(legacy_group)) {
-        _impl::ServerHistory new_history{new_path, context, compaction_control}; // Throws
+        _impl::ServerReplicationImpl new_history{new_path, context, compaction_control}; // Throws
         DBRef new_shared_group = DB::create(new_history);                        // Throws
         WriteTransaction wt{new_shared_group};
         sync::import_from_legacy_format(legacy_group, wt, logger); // Throws
@@ -61,7 +61,7 @@ bool try_migrate_file(const std::string original_path, const std::string& new_pa
         // Assume that this failure is because the Realm file was already
         // migrated, but verify the assumption by opening it with the right
         // history type.
-        _impl::ServerHistory history{original_path, context, compaction_control}; // Throws
+        _impl::ServerReplicationImpl history{original_path, context, compaction_control}; // Throws
         DBRef db = DB::create(history);                                           // Throws
         return false;
     }

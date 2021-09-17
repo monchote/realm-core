@@ -75,7 +75,7 @@ TEST(AsyncOpen_DisableStateRealms)
     ClientServerFixture fixture(dir, test_context, config);
     fixture.start();
 
-    std::unique_ptr<ClientReplication> history_1 = make_client_replication(path_1);
+    std::unique_ptr<ClientHistory> history_1 = make_client_replication(path_1);
     DBRef sg_1 = DB::create(*history_1);
 
     {
@@ -115,7 +115,7 @@ TEST(AsyncOpen_DisableStateRealms)
     CHECK_EQUAL(state_downloadable, 0);
 
     {
-        std::unique_ptr<ClientReplication> history_2 = make_client_replication(path_2);
+        std::unique_ptr<ClientHistory> history_2 = make_client_replication(path_2);
         DBRef sg_2 = DB::create(*history_2);
         ReadTransaction rt_1(sg_1);
         ReadTransaction rt_2(sg_2);
@@ -140,7 +140,7 @@ TEST(AsyncOpen_StateRealmManagement)
     ClientServerFixture fixture(dir, test_context);
     fixture.start();
 
-    std::unique_ptr<ClientReplication> history_1 = make_client_replication(path_1);
+    std::unique_ptr<ClientHistory> history_1 = make_client_replication(path_1);
     DBRef sg_1 = DB::create(*history_1);
     Session session_1 = fixture.make_session(path_1);
     fixture.bind_session(session_1, server_path);
