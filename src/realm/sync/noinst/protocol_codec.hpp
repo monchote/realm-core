@@ -141,7 +141,7 @@ public:
         };
 
         auto parse_and_check_msg_data = [&](const auto what, char end_delim, auto&&... args) {
-            auto sw_msg_data = parse_header_line_nothrow(msg_data, end_delim, args...);
+            auto sw_msg_data = parse_header_line(msg_data, end_delim, args...);
             if (!sw_msg_data.is_ok()) {
                 report_error(Error::bad_syntax, "Bad syntax in %1: %2", what, sw_msg_data.get_status());
                 return false;
@@ -445,7 +445,7 @@ public:
         };
 
         auto parse_and_check_msg_data = [&](const auto what, char end_delim, auto&&... args) {
-            auto sw_msg_data = parse_header_line_nothrow(msg_data, end_delim, args...);
+            auto sw_msg_data = parse_header_line(msg_data, end_delim, args...);
             if (!sw_msg_data.is_ok()) {
                 report_error(Error::bad_syntax, "Bad syntax in %1: %2", what, sw_msg_data.get_status());
                 return false;
