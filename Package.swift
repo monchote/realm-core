@@ -571,6 +571,7 @@ let headers: [String] = [
     "realm/sync/noinst/compact_changesets.hpp",
     "realm/sync/noinst/compression.hpp",
     "realm/sync/noinst/file_descriptors.hpp",
+    "realm/sync/noinst/header_line_parser.hpp",
     "realm/sync/noinst/integer_codec.hpp",
     "realm/sync/noinst/object_id_history_state.hpp",
     "realm/sync/noinst/protocol_codec.hpp",
