@@ -107,7 +107,7 @@ constexpr int get_server_history_schema_version() noexcept
 }
 
 
-class ServerHistory : public sync::ClientReplicationBase,
+class ServerHistory : public sync::ClientReplication,
                       public _impl::History,
                       public std::enable_shared_from_this<ServerHistory> {
 public:
@@ -122,7 +122,7 @@ public:
     using UploadCursor           = sync::UploadCursor;
     using SyncProgress           = sync::SyncProgress;
     using HistoryEntry           = sync::HistoryEntry;
-    using IntegrationError       = sync::ClientReplicationBase::IntegrationError;
+    using IntegrationError       = sync::ClientReplication::IntegrationError;
     // clang-format on
 
     enum class BootstrapError {
@@ -890,7 +890,7 @@ inline ServerHistory::IntegratableChangeset::IntegratableChangeset(file_ident_ty
 
 inline ServerHistory::ServerHistory(const std::string& realm_path, Context& context,
                                     CompactionControl& compaction_control)
-    : sync::ClientReplicationBase{realm_path} // Throws
+    : sync::ClientReplication{realm_path} // Throws
     , m_context{context}
     , m_compaction_control{compaction_control}
 {

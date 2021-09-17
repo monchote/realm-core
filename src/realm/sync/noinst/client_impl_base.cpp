@@ -28,7 +28,7 @@ using namespace realm::util;
 // clang-format off
 using Connection      = ClientImplBase::Connection;
 using Session         = ClientImplBase::Session;
-using UploadChangeset = sync::ClientReplicationBase::UploadChangeset;
+using UploadChangeset = sync::ClientReplication::UploadChangeset;
 
 // These are a work-around for a bug in MSVC. It cannot find in-class types
 // mentioned in signature of out-of-line member function definitions.

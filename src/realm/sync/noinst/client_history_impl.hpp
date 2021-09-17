@@ -127,7 +127,7 @@ public:
     version_type prepare_changeset(const char*, size_t, version_type) override final;
     void finalize_changeset() noexcept override final;
 
-    // Overriding member functions in realm::sync::ClientReplicationBase
+    // Overriding member functions in realm::sync::ClientReplication
     void get_status(version_type&, SaltedFileIdent&, SyncProgress&) const override final;
     void set_client_file_ident(SaltedFileIdent, bool) override final;
     void set_sync_progress(const SyncProgress&, const std::uint_fast64_t*, VersionInfo&) override final;
@@ -141,9 +141,7 @@ public:
                                           std::uint_fast64_t&, std::uint_fast64_t&);
     // Overriding member functions in realm::sync::ClientHistory
     void get_upload_download_bytes(std::uint_fast64_t&, std::uint_fast64_t&, std::uint_fast64_t&, std::uint_fast64_t&,
-                                   std::uint_fast64_t&) override final;
-    UploadCursor get_upload_anchor_of_current_transact(const Transaction&) const override final;
-    util::StringView get_sync_changeset_of_current_transact(const Transaction&) const noexcept override final;
+                                   std::uint_fast64_t&);
 
     // Overriding member functions in realm::sync::TransformHistory
     version_type find_history_entry(version_type, version_type, HistoryEntry&) const noexcept override final;

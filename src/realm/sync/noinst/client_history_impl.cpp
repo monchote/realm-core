@@ -620,27 +620,6 @@ void ClientHistoryImpl::get_upload_download_bytes(DB* db, std::uint_fast64_t& do
     }
 }
 
-// Overriding member function in realm::sync::ClientHistory
-auto ClientHistoryImpl::get_upload_anchor_of_current_transact(const Transaction& tr) const -> UploadCursor
-{
-    REALM_ASSERT(tr.get_transact_stage() != DB::transact_Ready);
-    version_type current_version = tr.get_version();
-    ensure_updated(current_version); // Throws
-    UploadCursor upload_anchor;
-    upload_anchor.client_version = current_version;
-    upload_anchor.last_integrated_server_version = m_progress_download.server_version;
-    return upload_anchor;
-}
-
-// Overriding member function in realm::sync::ClientHistory
-util::StringView ClientHistoryImpl::get_sync_changeset_of_current_transact(const Transaction& tr) const noexcept
-{
-    REALM_ASSERT(tr.get_transact_stage() == DB::transact_Writing);
-    const sync::ChangesetEncoder& encoder = get_instruction_encoder();
-    const sync::ChangesetEncoder::Buffer& buffer = encoder.buffer();
-    return {buffer.data(), buffer.size()};
-}
-
 // Overriding member function in realm::sync::TransformHistory
 auto ClientHistoryImpl::find_history_entry(version_type begin_version, version_type end_version,
                                            HistoryEntry& entry) const noexcept -> version_type
