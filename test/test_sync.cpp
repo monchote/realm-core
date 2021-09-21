@@ -19,6 +19,7 @@
 #include <realm/util/random.hpp>
 #include <realm/util/websocket.hpp>
 #include <realm/chunked_binary.hpp>
+#include <realm/sync/noinst/header_line_parser.hpp>
 #include <realm/sync/noinst/server_history.hpp>
 #include <realm/sync/noinst/protocol_codec.hpp>
 #include <realm/sync/noinst/server_dir.hpp>
@@ -40,12 +41,6 @@
 #include "util/thread_wrapper.hpp"
 #include "util/mock_metrics.hpp"
 #include "util/compare_groups.hpp"
-
-using namespace realm;
-using namespace realm::sync;
-using namespace realm::test_util;
-using namespace realm::fixtures;
-
 
 // Test independence and thread-safety
 // -----------------------------------
@@ -78,6 +73,10 @@ using namespace realm::fixtures;
 
 
 namespace {
+using namespace realm;
+using namespace realm::sync;
+using namespace realm::test_util;
+using namespace realm::fixtures;
 
 class TestServerHistoryContext : public _impl::ServerHistory::Context {
 public:
@@ -7615,6 +7614,37 @@ TEST(Sync_MergeStringPrimaryKey)
         session_2.wait_for_upload_complete_or_client_stopped();
         // Download completion is not important.
     }
+}
+
+TEST(Sync_HeaderLineParser)
+{
+    std::string okay_header = "message 123 1 0\n";
+    util::StringView str_match;
+    auto sw_sv = _impl::parse_header_line(okay_header, ' ', str_match);
+    CHECK(sw_sv.is_ok());
+    CHECK(sw_sv.get_value() == "123 1 0\n");
+    CHECK(str_match == "message");
+
+    int int_value = -1;
+    bool bool_value_true = false, bool_value_false = true;
+    sw_sv = _impl::parse_header_line(sw_sv.get_value(), '\n', int_value, bool_value_true, bool_value_false);
+    CHECK(sw_sv.is_ok());
+    CHECK(sw_sv.get_value().empty());
+    CHECK(int_value == 123);
+    CHECK(bool_value_true);
+    CHECK_NOT(bool_value_false);
+
+    std::string bad_end_delimiter = "message 123\t";
+    sw_sv = _impl::parse_header_line(bad_end_delimiter, '\n', str_match, int_value);
+    CHECK_NOT(sw_sv.is_ok());
+
+    std::string missing_end_delimiter = "message 123";
+    sw_sv = _impl::parse_header_line(missing_end_delimiter, '\n', str_match, int_value);
+    CHECK_NOT(sw_sv.is_ok());
+
+    std::string too_many_spaces = "message  123";
+    sw_sv = _impl::parse_header_line(too_many_spaces, '\n', str_match, int_value);
+    CHECK_NOT(sw_sv.is_ok());
 }
 
 } // unnamed namespace

@@ -59,11 +59,16 @@ inline StatusWith<util::StringView> parse_header_element(util::StringView sv, ch
         REALM_UNREACHABLE();
     }
 
-    if (sv.front() == ' ') {
-        return parse_header_element(sv.substr(1), end_delim, next_args...);
+    if (sv.empty()) {
+        return {ErrorCodes::RuntimeError, "reached end of header line prematurely"};
     }
+
     if (sv.front() == end_delim) {
         return sv.substr(1);
+    }
+
+    if (sv.front() == ' ') {
+        return parse_header_element(sv.substr(1), end_delim, next_args...);
     }
 
     return {ErrorCodes::RuntimeError, "found invalid character in header line"};
