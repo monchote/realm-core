@@ -3,6 +3,7 @@
 #include "realm/sync/instruction_applier.hpp"
 #include "realm/sync/impl/clamped_hex_dump.hpp"
 #include "realm/sync/noinst/client_history_impl.hpp"
+#include "realm/sync/noinst/header_line_parser.hpp"
 #include "realm/sync/protocol.hpp"
 #include "realm/sync/transform.hpp"
 #include "realm/sync/changeset_parser.hpp"
@@ -20,8 +21,10 @@
 #include <string>
 #include <type_traits>
 
-
+namespace {
+using namespace realm;
 using namespace realm::util;
+using namespace realm::_impl;
 
 template <typename T>
 using ParseResult = std::pair<T, StringView>;
@@ -58,69 +61,22 @@ struct UploadMessage {
 
 using Message = mpark::variant<ServerIdentMessage, DownloadMessage, UploadMessage>;
 
-struct MessageParseException : public std::runtime_error {
-    using std::runtime_error::runtime_error;
+struct MessageParseException : public realm::ExceptionForStatus {
+    using realm::ExceptionForStatus::ExceptionForStatus;
 
     template <typename... Args>
     MessageParseException(const char* fmt, Args&&... args)
-        : std::runtime_error(format(fmt, args...))
+        : realm::ExceptionForStatus(realm::ErrorCodes::RuntimeError, format(fmt, args...))
     {
     }
 };
 
-// These functions will parse the space/new-line delimited headers found at the beginning of
-// messages and changesets.
-StringView parse_header_element(StringView sv, char)
+StringView check_parse_result(StatusWith<StringView> sv)
 {
-    return sv;
-}
-
-template <typename T, typename = std::enable_if_t<std::is_integral_v<std::remove_reference_t<T>>>>
-StringView parse_header_value(StringView sv, T&& cur_arg)
-{
-    auto parse_res = realm::util::from_chars(sv.begin(), sv.end(), cur_arg, 10);
-    if (parse_res.ec != std::errc{}) {
-        throw MessageParseException("error parsing integer in header line: %1",
-                                    std::make_error_code(parse_res.ec).message());
+    if (!sv.is_ok()) {
+        throw MessageParseException(sv.get_status());
     }
-
-    return sv.substr(parse_res.ptr - sv.begin());
-}
-
-StringView parse_header_value(StringView sv, StringView& cur_arg)
-{
-    auto delim_at = std::find(sv.begin(), sv.end(), ' ');
-    if (delim_at == sv.end()) {
-        throw MessageParseException("reached end of header line prematurely");
-    }
-
-    auto sub_str_len = std::distance(sv.begin(), delim_at);
-    cur_arg = StringView(sv.begin(), sub_str_len);
-
-    return sv.substr(sub_str_len);
-}
-
-template <typename T, typename... Args>
-StringView parse_header_element(StringView sv, char end_delim, T&& cur_arg, Args&&... next_args)
-{
-    if (sv.empty()) {
-        throw MessageParseException("cannot parse an empty header line");
-    }
-    sv = parse_header_value(sv, std::forward<T&&>(cur_arg));
-
-    if (sv.front() == ' ') {
-        return parse_header_element(sv.substr(1), end_delim, next_args...);
-    }
-    if (sv.front() == end_delim) {
-        return sv.substr(1);
-    }
-    throw MessageParseException("found invalid character in header line");
-}
-
-template <typename... Args>
-StringView parse_header_line(StringView sv, char end_delim, Args&&... args)
-{
-    return parse_header_element(sv, end_delim, args...);
+    return sv.get_value();
 }
 
 struct MessageBody {
@@ -166,7 +122,7 @@ MessageBody MessageBody::parse(StringView sv, std::size_t compressed_body_size, 
 ParseResult<Message> parse_message(StringView sv, Logger& logger)
 {
     StringView message_type;
-    sv = parse_header_element(sv, ' ', message_type);
+    sv = check_parse_result(parse_header_line(sv, ' ', message_type));
 
     if (message_type == "download") {
         return DownloadMessage::parse(sv, logger);
@@ -183,7 +139,8 @@ ParseResult<Message> parse_message(StringView sv, Logger& logger)
 ParseResult<ServerIdentMessage> ServerIdentMessage::parse(StringView sv)
 {
     ServerIdentMessage ret;
-    sv = parse_header_line(sv, '\n', ret.session_ident, ret.file_ident.ident, ret.file_ident.salt);
+    sv =
+        check_parse_result(parse_header_line(sv, '\n', ret.session_ident, ret.file_ident.ident, ret.file_ident.salt));
 
     return std::make_pair(std::move(ret), sv);
 }
@@ -194,11 +151,12 @@ ParseResult<DownloadMessage> DownloadMessage::parse(StringView sv, Logger& logge
     int is_body_compressed;
     std::size_t uncompressed_body_size, compressed_body_size;
 
-    sv = parse_header_line(sv, '\n', ret.session_ident, ret.progress.download.server_version,
-                           ret.progress.download.last_integrated_client_version, ret.latest_server_version.version,
-                           ret.latest_server_version.salt, ret.progress.upload.client_version,
-                           ret.progress.upload.last_integrated_server_version, ret.downloadable_bytes,
-                           is_body_compressed, uncompressed_body_size, compressed_body_size);
+    sv = check_parse_result(
+        parse_header_line(sv, '\n', ret.session_ident, ret.progress.download.server_version,
+                          ret.progress.download.last_integrated_client_version, ret.latest_server_version.version,
+                          ret.latest_server_version.salt, ret.progress.upload.client_version,
+                          ret.progress.upload.last_integrated_server_version, ret.downloadable_bytes,
+                          is_body_compressed, uncompressed_body_size, compressed_body_size));
 
     auto message_body = MessageBody::parse(sv, compressed_body_size, uncompressed_body_size, is_body_compressed);
     ret.uncompressed_body_buffer = std::move(message_body.uncompressed_body_buffer);
@@ -214,10 +172,10 @@ ParseResult<DownloadMessage> DownloadMessage::parse(StringView sv, Logger& logge
     while (!body_view.empty()) {
         realm::sync::Transformer::RemoteChangeset cur_changeset;
         std::size_t changeset_size;
-        body_view =
-            parse_header_line(body_view, ' ', cur_changeset.remote_version,
-                              cur_changeset.last_integrated_local_version, cur_changeset.origin_timestamp,
-                              cur_changeset.origin_file_ident, cur_changeset.original_changeset_size, changeset_size);
+        body_view = check_parse_result(parse_header_line(
+            body_view, ' ', cur_changeset.remote_version, cur_changeset.last_integrated_local_version,
+            cur_changeset.origin_timestamp, cur_changeset.origin_file_ident, cur_changeset.original_changeset_size,
+            changeset_size));
         if (changeset_size > body_view.size()) {
             throw MessageParseException("changeset length is %1 but buffer size is %2", changeset_size,
                                         body_view.size());
@@ -244,9 +202,10 @@ ParseResult<UploadMessage> UploadMessage::parse(StringView sv, Logger& logger)
     int is_body_compressed;
     std::size_t uncompressed_body_size, compressed_body_size;
 
-    sv = parse_header_line(sv, '\n', ret.session_ident, is_body_compressed, uncompressed_body_size,
-                           compressed_body_size, ret.upload_progress.client_version,
-                           ret.upload_progress.last_integrated_server_version, ret.locked_server_version);
+    sv = check_parse_result(parse_header_line(sv, '\n', ret.session_ident, is_body_compressed, uncompressed_body_size,
+                                              compressed_body_size, ret.upload_progress.client_version,
+                                              ret.upload_progress.last_integrated_server_version,
+                                              ret.locked_server_version));
 
     auto message_body = MessageBody::parse(sv, compressed_body_size, uncompressed_body_size, is_body_compressed);
     ret.uncompressed_body_buffer = std::move(message_body.uncompressed_body_buffer);
@@ -256,9 +215,10 @@ ParseResult<UploadMessage> UploadMessage::parse(StringView sv, Logger& logger)
     while (!body_view.empty()) {
         realm::sync::Changeset cur_changeset;
         std::size_t changeset_size;
-        body_view =
+        body_view = check_parse_result(
             parse_header_line(body_view, ' ', cur_changeset.version, cur_changeset.last_integrated_remote_version,
-                              cur_changeset.origin_timestamp, cur_changeset.origin_file_ident, changeset_size);
+                              cur_changeset.origin_timestamp, cur_changeset.origin_file_ident, changeset_size));
+
         if (changeset_size > body_view.size()) {
             throw MessageParseException("changeset length in upload message is %1 but bufer size is %2",
                                         changeset_size, body_view.size());
@@ -302,6 +262,8 @@ void print_usage(StringView program_name)
                  "                       command belongs to."
               << std::endl;
 }
+
+} // namespace
 
 int main(int argc, const char** argv)
 {
