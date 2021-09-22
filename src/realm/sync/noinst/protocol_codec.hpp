@@ -221,6 +221,11 @@ public:
                                         body_data.size());
                 }
 
+                if (cur_changeset.remote_version == 0) {
+                    return report_error(Error::bad_server_version,
+                                        "Server version in downloaded changeset cannot be zero");
+                }
+
                 BinaryData changeset_data(body_data.data(), changeset_size);
                 body_data = body_data.substr(changeset_size);
 
