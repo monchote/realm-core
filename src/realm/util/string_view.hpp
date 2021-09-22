@@ -68,7 +68,6 @@ public:
     size_type find_first_not_of(BasicStringView<C, T>, size_type i = 0) const noexcept;
     size_type find_first_not_of(C ch, size_type i = 0) const noexcept;
 
-
 private:
     const char* m_data = nullptr;
     std::size_t m_size = 0;
