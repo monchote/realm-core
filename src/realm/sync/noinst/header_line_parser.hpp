@@ -63,21 +63,38 @@ inline StatusWith<util::StringView> parse_header_element(util::StringView sv, ch
         return {ErrorCodes::RuntimeError, "reached end of header line prematurely"};
     }
 
-    if (sv.front() == end_delim) {
-        return sv.substr(1);
-    }
-
+    // if end_delim is ' ' then this will consume the whole line and terminate when there are no more
+    // args to parse with the base case of parse_header_element(StringView, char).
     if (sv.front() == ' ') {
         return parse_header_element(sv.substr(1), end_delim, next_args...);
+    }
+
+    if (sv.front() == end_delim) {
+        if (sizeof...(next_args) > 0) {
+            return {ErrorCodes::RuntimeError, "header line ended with end delimeter before all values were parsed"};
+        }
+        return sv.substr(1);
     }
 
     return {ErrorCodes::RuntimeError, "found invalid character in header line"};
 }
 
-// parses a header line from a wire protocol message contained in sv. This function will split sv on spaces
-// and convert the string values into string, integer, and boolean types as they're split.
+// Parses a header line from a wire protocol message contained in sv. This function will split sv on spaces
+// and parse the string values into string, integer, and boolean types as they're split. Each header line
+// should be terminated with the end_delim character and each value should be delimited by exactly one space.
 //
-// This function returns sv after the parsed header prefix has been removed or a Status representing an error.
+// For a header line:
+//
+// message 1234 1\n
+//
+// You can parse it by doing this:
+//
+// util::StringView str_value;
+// int int_value;
+// bool bool_value;
+// auto sw_sv = parse_header_line(msg, '\n', str_value, int_value, bool_value);
+//
+// This function returns sv after the parsed header has been removed or a Status representing an error.
 // It is not effected by locale and does not throw.
 template <typename... Args>
 inline StatusWith<util::StringView> parse_header_line(util::StringView sv, char end_delim, Args&&... args) noexcept

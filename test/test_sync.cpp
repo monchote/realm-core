@@ -7645,6 +7645,10 @@ TEST(Sync_HeaderLineParser)
     std::string too_many_spaces = "message  123";
     sw_sv = _impl::parse_header_line(too_many_spaces, '\n', str_match, int_value);
     CHECK_NOT(sw_sv.is_ok());
+
+    std::string early_end_delimeter = "message 123\n 1";
+    sw_sv = _impl::parse_header_line(early_end_delimeter, '\n', str_match, int_value, bool_value_true);
+    CHECK_NOT(sw_sv.is_ok());
 }
 
 } // unnamed namespace
