@@ -402,6 +402,13 @@ public:
     void claim_sync_agent();
     void release_sync_agent();
 
+protected:
+    explicit DB(const DBOptions& options); // Is this ever used?
+
+private:
+    class AsyncCommitHelper;
+    struct SharedInfo;
+    struct ReadCount;
     struct ReadLockInfo {
         uint_fast64_t m_version = std::numeric_limits<version_type>::max();
         uint_fast32_t m_reader_idx = 0;
@@ -419,14 +426,6 @@ public:
     };
     class ReadLockGuard;
 
-protected:
-    explicit DB(const DBOptions& options); // Is this ever used?
-
-private:
-    class AsyncCommitHelper;
-    struct SharedInfo;
-    struct ReadCount;
-
     // Member variables
     std::recursive_mutex m_mutex;
     int m_transaction_count = 0;
@@ -438,6 +437,7 @@ private:
     size_t m_used_space = 0;
     uint_fast32_t m_local_max_entry = 0;          // highest version observed by this DB
     std::vector<ReadLockInfo> m_local_locks_held; // tracks all read locks held by this DB
+    util::Optional<uint_fast32_t> m_oldest_entry_not_persisted;
     util::File m_file;
     util::File::Map<SharedInfo> m_file_map;   // Never remapped, provides access to everything but the ringbuffer
     util::File::Map<SharedInfo> m_reader_map; // provides access to ringbuffer, remapped as needed when it grows
@@ -710,18 +710,6 @@ public:
     {
         std::unique_lock<std::mutex> lck(mtx);
         return m_async_stage == AsyncState::Syncing;
-    }
-
-    // methods for use with async interface for cont. transactions
-    DB::ReadLockInfo grab_read_lock()
-    {
-        DB::ReadLockInfo rli;
-        get_db()->grab_read_lock(rli, VersionID());
-        return rli;
-    }
-    void release_read_lock(DB::ReadLockInfo& read_lock)
-    {
-        get_db()->release_read_lock(read_lock);
     }
 
     void wait_for_write_lock()

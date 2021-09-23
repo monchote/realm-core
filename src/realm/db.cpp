@@ -2278,6 +2278,15 @@ void DB::do_end_write() noexcept
     m_pick_next_writer.notify_all();
 
     std::lock_guard<std::recursive_mutex> local_lock(m_mutex);
+
+    if (m_oldest_entry_not_persisted) {
+        // Mark entry as free
+        SharedInfo* r_info = m_reader_map.get_addr();
+        auto& rc = r_info->readers.get(*m_oldest_entry_not_persisted);
+        atomic_double_dec(rc.count);
+        m_oldest_entry_not_persisted.reset();
+    }
+
     m_alloc.set_read_only(true);
     m_write_transaction_open = false;
     m_writemutex.unlock();
@@ -2439,6 +2448,12 @@ void DB::low_level_commit(uint_fast64_t new_version, Transaction& transaction, b
         const Ringbuffer::ReadCount& rc = r_info->readers.get_oldest();
         oldest_version = rc.version;
 
+        if (!commit_to_disk && !m_oldest_entry_not_persisted) {
+            // Mark last entry as being in use
+            m_oldest_entry_not_persisted = r_info->readers.last();
+            const Ringbuffer::ReadCount& r = r_info->readers.get(*m_oldest_entry_not_persisted);
+            atomic_double_inc_if_even(r.count);
+        }
         // Allow for trimming of the history. Some types of histories do not
         // need store changesets prior to the oldest bound snapshot.
         if (auto hist = transaction.get_history())
@@ -2515,6 +2530,7 @@ void DB::low_level_commit(uint_fast64_t new_version, Transaction& transaction, b
             r.filesize = new_file_size;
             r.version = new_version;
             r_info->readers.use_next();
+
             // REALM_ASSERT(m_alloc.matches_section_boundary(new_file_size));
             REALM_ASSERT(new_top_ref < new_file_size);
         }
