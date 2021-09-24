@@ -698,19 +698,15 @@ let package = Package(
     products: [
         .library(
             name: "RealmCore",
-            type: .dynamic,
             targets: ["RealmCore"]),
         .library(
             name: "RealmQueryParser",
-            type: .dynamic,
             targets: ["RealmQueryParser"]),
         .library(
             name: "RealmCapi",
-            type: .dynamic,
             targets: ["Capi"]),
         .library(
             name: "RealmFFI",
-            type: .dynamic,
             targets: ["RealmFFI"]),
     ],
     targets: [
