@@ -161,8 +161,8 @@ char (&ArraySizeHelper(const T (&array)[N]))[N];
 // variables must themselves be PODs.
 
 // Specializing std::is_pod is no longer allowed in newer C++ standards.
-#define DECLARE_POD(TypeName)                       \                                                 \
-typedef int Dummy_Type_For_DECLARE_POD              \
+#define DECLARE_POD(TypeName)
+typedef int Dummy_Type_For_DECLARE_POD
 
 // We once needed a different technique to assert that a nested class
 // is a POD. This is no longer necessary, and DECLARE_NESTED_POD is
@@ -175,7 +175,7 @@ typedef int Dummy_Type_For_DECLARE_POD              \
 
 // Declare that TemplateName<T> is a POD whenever T is
 // Specializing std::is_pod is no longer allowed in newer C++ standards.
-#define PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT(TemplateName)             \                                                                     \
+#define PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT(TemplateName)
 typedef int Dummy_Type_For_PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT
 
 // Macro that does nothing if TypeName is a POD, and gives a compiler
