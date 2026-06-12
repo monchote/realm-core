@@ -160,10 +160,8 @@ char (&ArraySizeHelper(const T (&array)[N]))[N];
 // protected members, or virtual functions, and all of its member
 // variables must themselves be PODs.
 
-#define DECLARE_POD(TypeName)                       \
-namespace std {                                    \
-template<> struct is_pod<TypeName> : true_type { }; \
-}                                                   \
+// Specializing std::is_pod is no longer allowed in newer C++ standards.
+#define DECLARE_POD(TypeName)                       \                                                 \
 typedef int Dummy_Type_For_DECLARE_POD              \
 
 // We once needed a different technique to assert that a nested class
@@ -176,10 +174,8 @@ typedef int Dummy_Type_For_DECLARE_POD              \
 #define DECLARE_NESTED_POD(TypeName) DECLARE_POD(TypeName)
 
 // Declare that TemplateName<T> is a POD whenever T is
-#define PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT(TemplateName)             \
-namespace std {                                                       \
-template <typename T> struct is_pod<TemplateName<T> > : std::is_trivial<T> { }; \
-}                                                                      \
+// Specializing std::is_pod is no longer allowed in newer C++ standards.
+#define PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT(TemplateName)             \                                                                     \
 typedef int Dummy_Type_For_PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT
 
 // Macro that does nothing if TypeName is a POD, and gives a compiler
